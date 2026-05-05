@@ -246,7 +246,18 @@ const [messagesError, setMessagesError] = useState<string | null>(null)
   const endRef     = useRef<HTMLDivElement>(null)
 
   const [filterValues, setFilterValues] = useState<Record<string, string>>({})
+useEffect(() => {
+  const testSupabase = async () => {
+    const { data, error } = await supabase
+      .from('conversations')
+      .select('*')
+      .limit(1)
 
+    console.log('TESTE SUPABASE:', { data, error })
+  }
+
+  testSupabase()
+}, [])
   useEffect(() => {
     const fn = (e: MouseEvent) => {
       if (filtroRef.current && !filtroRef.current.contains(e.target as Node))
