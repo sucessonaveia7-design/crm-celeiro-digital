@@ -3,22 +3,13 @@ import { createPortal } from 'react-dom'
 import {
   Search, SlidersHorizontal, MessageSquare, Send,
   MoreVertical, Phone, Video, Info, X,
-  Tag, Users, Building2, Smartphone, ChevronDown, Check,
+  Tag, Users, Building2, Smartphone, Check,
   Headphones, UserPlus, Calendar, FileText, Settings,
   Paperclip, Smile, ArrowLeft, Plus, Bell, CircleDot,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 
 const API_URL = "http://localhost:4000";
-
-interface ConversationAPI {
-  id: string;
-  status: string;
-  department: string | null;
-  unread_count: number;
-  last_message: string | null;
-  last_message_at: string | null;
-}
 
 /* ─────────────────────────────── TYPES ─────────────────────────────── */
 interface Conversa {
@@ -27,7 +18,6 @@ interface Conversa {
   iniciais: string; cor: string; departamento: string
   etiqueta?: string; online?: boolean; canal?: string
 }
-interface Mensagem { id: number; texto: string; hora: string; enviada: boolean }
 interface MessageAPI {
   id: string;
   conversation_id: string;
@@ -41,52 +31,6 @@ interface MessageAPI {
 }
 type Aba = 'atendendo' | 'aguardando' | 'resolvidos'
 
-/* ─────────────────────────────── DATA ──────────────────────────────── */
-const CONVERSAS: Conversa[] = [
-  { id:1, nome:'Maria Silva',    ultimaMensagem:'Oi, preciso de ajuda com meu pedido',         horario:'14:32', naoLidas:3, status:'atendendo',  iniciais:'MS', cor:'#D4AF37', departamento:'Suporte',    etiqueta:'Urgente', online:true,  canal:'WhatsApp' },
-  { id:2, nome:'João Pereira',   ultimaMensagem:'Obrigado pelo atendimento!',                   horario:'13:18', naoLidas:0, status:'atendendo',  iniciais:'JP', cor:'#3B82F6', departamento:'Vendas',                        online:false, canal:'Chat'     },
-  { id:3, nome:'Ana Souza',      ultimaMensagem:'Quando vocês abrem amanhã?',                   horario:'12:05', naoLidas:1, status:'atendendo',  iniciais:'AS', cor:'#8B5CF6', departamento:'Suporte',                        online:true,  canal:'WhatsApp' },
-  { id:4, nome:'Carlos Mendes',  ultimaMensagem:'Aguardando retorno sobre meu caso',            horario:'11:47', naoLidas:2, status:'aguardando', iniciais:'CM', cor:'#EF4444', departamento:'Financeiro', etiqueta:'VIP',     online:false, canal:'Chat'     },
-  { id:5, nome:'Patrícia Lima',  ultimaMensagem:'Preciso de informações sobre planos',          horario:'10:30', naoLidas:0, status:'aguardando', iniciais:'PL', cor:'#F97316', departamento:'Vendas',                         online:false, canal:'WhatsApp' },
-  { id:6, nome:'Roberto Alves',  ultimaMensagem:'Problema resolvido, muito obrigado!',          horario:'Ontem', naoLidas:0, status:'resolvido',  iniciais:'RA', cor:'#10B981', departamento:'Suporte',                        online:false, canal:'Chat'     },
-  { id:7, nome:'Fernanda Costa', ultimaMensagem:'Tudo certo, até mais!',                        horario:'Ontem', naoLidas:0, status:'resolvido',  iniciais:'FC', cor:'#6366F1', departamento:'Vendas',                         online:false, canal:'Chat'     },
-]
-
-const MSGS: Record<number, Mensagem[]> = {
-  1:[
-    { id:1, texto:'Olá, Maria! Como posso ajudar?',                                                              hora:'14:28', enviada:true  },
-    { id:2, texto:'Oi, preciso de ajuda com meu pedido. Fiz uma compra ontem e não recebi a confirmação.',        hora:'14:30', enviada:false },
-    { id:3, texto:'Entendido! Pode me informar o número do pedido ou o e-mail cadastrado?',                       hora:'14:31', enviada:true  },
-    { id:4, texto:'Claro! O número é #48291 e meu e-mail é maria@email.com.',                                      hora:'14:32', enviada:false },
-  ],
-  2:[
-    { id:1, texto:'Bom dia, João! Em que posso ajudar hoje?',                                                     hora:'13:00', enviada:true  },
-    { id:2, texto:'Gostaria de saber mais sobre os planos disponíveis.',                                           hora:'13:05', enviada:false },
-    { id:3, texto:'Claro! Temos 3 planos: Básico, Profissional e Premium. Posso detalhar cada um.',                hora:'13:10', enviada:true  },
-    { id:4, texto:'Obrigado pelo atendimento!',                                                                    hora:'13:18', enviada:false },
-  ],
-  3:[
-    { id:1, texto:'Olá, Ana! Como posso ajudar?',   hora:'12:00', enviada:true  },
-    { id:2, texto:'Quando vocês abrem amanhã?',      hora:'12:05', enviada:false },
-  ],
-  4:[
-    { id:1, texto:'Bom dia, Carlos! Em que posso ajudar?',                          hora:'11:30', enviada:true  },
-    { id:2, texto:'Estou aguardando retorno sobre meu caso desde segunda-feira.',    hora:'11:40', enviada:false },
-    { id:3, texto:'Aguardando retorno sobre meu caso',                               hora:'11:47', enviada:false },
-  ],
-  5:[
-    { id:1, texto:'Olá, Patrícia! Tudo bem?',             hora:'10:20', enviada:true  },
-    { id:2, texto:'Preciso de informações sobre planos',   hora:'10:30', enviada:false },
-  ],
-  6:[
-    { id:1, texto:'Roberto, conseguimos resolver. Pode testar agora.',   hora:'Ontem 16:10', enviada:true  },
-    { id:2, texto:'Problema resolvido, muito obrigado!',                  hora:'Ontem 16:18', enviada:false },
-  ],
-  7:[
-    { id:1, texto:'Fernanda, tudo resolvido de sua parte!',   hora:'Ontem 14:50', enviada:true  },
-    { id:2, texto:'Tudo certo, até mais!',                    hora:'Ontem 14:55', enviada:false },
-  ],
-}
 
 const FILTROS_ROWS = [
   {
@@ -231,33 +175,22 @@ function CustomFilterDropdown({
 
 /* ──────────────────────────── COMPONENT ────────────────────────────── */
 export default function Chat() {
-const [aba,    setAba]    = useState<Aba>('atendendo')
-const [sel,    setSel]    = useState<string | null>(null)
-const [busca,  setBusca]  = useState('')
-const [filtro, setFiltro] = useState(false)
-const [messageText, setMessageText] = useState('')
-const [conversations, setConversations] = useState<Conversa[]>([])
+  const [aba,           setAba]           = useState<Aba>('atendendo')
+  const [sel,           setSel]           = useState<string | null>(null)
+  const [busca,         setBusca]         = useState('')
+  const [filtro,        setFiltro]        = useState(false)
+  const [messageText,   setMessageText]   = useState('')
+  const [conversations, setConversations] = useState<Conversa[]>([])
+  const [messages,      setMessages]      = useState<MessageAPI[]>([])
+  const [messagesLoading, setMessagesLoading] = useState(false)
+  const [messagesError,   setMessagesError]   = useState<string | null>(null)
+  const [sending,       setSending]       = useState(false)
+  const [filterValues,  setFilterValues]  = useState<Record<string, string>>({})
 
-const [messages, setMessages] = useState<MessageAPI[]>([])
-const [messagesLoading, setMessagesLoading] = useState(false)
-const [messagesError, setMessagesError] = useState<string | null>(null)
+  const filtroRef = useRef<HTMLDivElement>(null)
+  const inputRef  = useRef<HTMLTextAreaElement>(null)
 
-  const filtroRef  = useRef<HTMLDivElement>(null)
-  const endRef     = useRef<HTMLDivElement>(null)
-
-  const [filterValues, setFilterValues] = useState<Record<string, string>>({})
-useEffect(() => {
-  const testSupabase = async () => {
-    const { data, error } = await supabase
-      .from('conversations')
-      .select('*')
-      .limit(1)
-
-    console.log('TESTE SUPABASE:', { data, error })
-  }
-
-  testSupabase()
-}, [])
+  // Fechar painel de filtros ao clicar fora
   useEffect(() => {
     const fn = (e: MouseEvent) => {
       if (filtroRef.current && !filtroRef.current.contains(e.target as Node))
@@ -267,15 +200,8 @@ useEffect(() => {
     return () => document.removeEventListener('mousedown', fn)
   }, [])
 
-   useEffect(() => {
-     endRef.current?.scrollIntoView({ behavior: 'smooth' })
-   }, [sel])
-
-  // Load conversations from Supabase
-  useEffect(() => {
-    console.log("🔄 useEffect loadConversations called");
-    loadConversations()
-  }, [])
+  // Carregar conversas ao montar
+  useEffect(() => { loadConversations() }, [])
 
   // Auto-selecionar primeira conversa da aba ativa
   useEffect(() => {
@@ -288,190 +214,118 @@ useEffect(() => {
     }
   }, [conversations])
 
-  // Verificação inicial de sessão
+  // Verificação e monitoramento de sessão
   useEffect(() => {
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
-        console.log("Sessão inválida → redirecionando para login")
-        window.location.href = "/login"
-      }
-    }
-    checkSession()
-  }, [])
-
-  // Monitorar expiração de sessão em tempo real
-  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) window.location.href = '/login'
+    })
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session) {
-        console.log("Sessão expirada → redirecionando para login")
-        window.location.href = "/login"
-      }
+      if (!session) window.location.href = '/login'
     })
     return () => listener.subscription.unsubscribe()
   }, [])
 
-    async function loadConversations() {
-      console.log("🔥 loadConversations executou");
+  async function loadConversations() {
+    const { data, error } = await supabase
+      .from('conversations')
+      .select(`
+        id,
+        status,
+        unread_count,
+        last_message,
+        last_message_at,
+        department,
+        contacts(name, phone),
+        channels(name, type)
+      `)
+      .order('last_message_at', { ascending: false })
+
+    if (error) {
+      console.error('Erro ao carregar conversas:', error)
+      return
+    }
+
+    const mapped = data.map((c) => {
+      const contact = Array.isArray(c.contacts) ? c.contacts[0] : c.contacts
+      const channel = Array.isArray(c.channels) ? c.channels[0] : c.channels
+      const nome = (contact as any)?.name ?? 'Contato'
+      const iniciais = nome.split(' ').map((p: string) => p[0]).join('').substring(0, 2).toUpperCase()
+      const horario = c.last_message_at
+        ? new Date(c.last_message_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        : ''
+      return {
+        id:           c.id,
+        nome,
+        ultimaMensagem: c.last_message ?? '',
+        horario,
+        naoLidas:     c.unread_count ?? 0,
+        status:       c.status,
+        iniciais,
+        cor:          '#D4AF37',
+        departamento: c.department ?? '',
+        canal:        (channel as any)?.type ?? 'Chat',
+        online:       false,
+      }
+    })
+
+    setConversations(mapped)
+  }
+
+  async function loadMessages(conversationId: string) {
+    try {
+      setMessagesLoading(true)
+      setMessagesError(null)
+
       const { data, error } = await supabase
-        .from("conversations")
-        .select(`
-          id,
-          status,
-          unread_count,
-          last_message,
-          last_message_at,
-          department,
-          contacts(name, phone),
-          channels(name, type)
-        `)
-        .order("last_message_at", { ascending: false });
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: true })
 
       if (error) {
-        console.error("Erro ao carregar conversas:", error);
-        return;
+        console.error('Erro ao carregar mensagens:', error)
+        throw error
       }
 
-      console.log("Conversations:", data);
+      setMessages(data ?? [])
 
-      // Map Supabase data to UI Conversa format
-      const mapped = data.map((c) => {
-        const nome = c.contacts?.name ?? "Contato";
-        const iniciais = nome
-          .split(" ")
-          .map(p => p[0])
-          .join("")
-          .substring(0, 2)
-          .toUpperCase();
-        const horario = c.last_message_at
-          ? new Date(c.last_message_at).toLocaleTimeString("pt-BR", {
-              hour: "2-digit",
-              minute: "2-digit"
-            })
-          : "";
+      setTimeout(() => {
+        const el = document.getElementById('chat-scroll')
+        if (el) el.scrollTop = el.scrollHeight
+      }, 100)
+    } catch (err: any) {
+      setMessagesError(err.message || 'Erro ao buscar mensagens')
+    } finally {
+      setMessagesLoading(false)
+    }
+  }
 
-        return {
-          id: c.id,
-          nome,
-          ultimaMensagem: c.last_message ?? "",
-          horario,
-          naoLidas: c.unread_count ?? 0,
-          status: c.status,
-          iniciais,
-          cor: "#D4AF37", // Default gold color, can be made dynamic later
-          departamento: c.department ?? "",
-          canal: c.channels?.type ?? "Chat",
-          online: false,
-          // etiqueta and other optional fields are left undefined
-        };
-      });
+  async function sendMessage() {
+    if (!sel || !messageText.trim() || sending) return
 
-       setConversations(mapped);
-     }
+    setSending(true)
+    const text = messageText.trim()
+    setMessageText('')
 
-     async function loadMessages(conversationId: string) {
-       try {
-         setMessagesLoading(true);
-         setMessagesError(null);
+    try {
+      const res = await fetch(`${API_URL}/api/conversations/${sel}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: text, message_type: 'text' }),
+      })
 
-         const { data: { session } } = await supabase.auth.getSession()
-         if (!session) {
-           console.log("Sessão inválida ao buscar mensagens")
-           return
-         }
+      if (!res.ok) throw new Error('Erro ao enviar mensagem')
 
-         console.log("Buscando mensagens da conversa:", conversationId)
-
-         const { data, error } = await supabase
-           .from('messages')
-           .select('*')
-           .eq('conversation_id', conversationId)
-           .order('created_at', { ascending: true })
-
-         if (error) {
-           console.error("Erro ao carregar mensagens:", error)
-           throw error
-         }
-
-         console.log("Mensagens retornadas:", data?.length ?? 0)
-
-         if (data && data.length > 0) {
-           setMessages(data)
-         } else {
-           // Fallback temporário para visualização enquanto não há mensagens reais
-           setMessages([
-             {
-               id: 'test-1',
-               conversation_id: conversationId,
-               sender_type: 'contact',
-               sender_id: null,
-               message_type: 'text',
-               content: 'Olá, preciso de ajuda.',
-               created_at: new Date(Date.now() - 60000).toISOString()
-             },
-             {
-               id: 'test-2',
-               conversation_id: conversationId,
-               sender_type: 'user',
-               sender_id: null,
-               message_type: 'text',
-               content: 'Olá! Como posso ajudar?',
-               created_at: new Date().toISOString()
-             }
-           ])
-         }
-
-         setTimeout(() => {
-           const el = document.getElementById("chat-scroll");
-           if (el) el.scrollTop = el.scrollHeight;
-         }, 100);
-       } catch (err: any) {
-         console.error("Erro ao buscar mensagens:", err)
-         setMessagesError(err.message || "Erro ao buscar mensagens");
-       } finally {
-         setMessagesLoading(false);
-       }
-     }
-
-     async function sendMessage() {
-       if (!sel || !messageText.trim()) return;
-
-       const { data: { session } } = await supabase.auth.getSession()
-       if (!session) {
-         console.log("Sessão inválida ao enviar mensagem")
-         return
-       }
-
-       try {
-         const res = await fetch(
-           `${API_URL}/api/conversations/${sel}/messages`,
-           {
-             method: "POST",
-             headers: {
-               "Content-Type": "application/json"
-             },
-             body: JSON.stringify({
-               content: messageText,
-               message_type: "text"
-             })
-           }
-         );
-
-         if (!res.ok) {
-           throw new Error("Erro ao enviar mensagem");
-         }
-
-         setMessageText("");
-
-         // recarregar mensagens
-         await loadMessages(sel);
-         
-         // Atualizar lista de conversas para mostrar a última mensagem na lateral
-         await loadConversations();
-       } catch (err) {
-         console.error("Erro ao enviar:", err);
-       }
-     }
+      await loadMessages(sel)
+      await loadConversations()
+    } catch (err) {
+      console.error('Erro ao enviar:', err)
+      setMessageText(text)
+    } finally {
+      setSending(false)
+      inputRef.current?.focus()
+    }
+  }
 
     const cont = {
       atendendo:  conversations.filter(c => c.status === 'atendendo').length,
@@ -632,9 +486,6 @@ useEffect(() => {
               )
             })}
           </div>
-
-          {/* TESTE */}
-          <p className="text-red-500 font-bold text-center py-2">TESTE FUNCIONANDO</p>
 
           {/* BLOCO 5a — Busca + botão de filtro */}
           <div className="flex-shrink-0 px-4 py-4 border-b border-white/[0.05]"
@@ -1009,21 +860,24 @@ useEffect(() => {
 
                    <div className="flex items-end gap-3 px-5 pt-4 pb-3">
                      <textarea
+                       ref={inputRef}
                        value={messageText}
                        onChange={e => setMessageText(e.target.value)}
                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
-                       placeholder="Digite uma mensagem…"
+                       placeholder="Digite uma mensagem..."
                        rows={2}
+                       disabled={sending}
                        className="flex-1 bg-transparent text-[13.5px] text-[#1E293B]
                                   placeholder:text-slate-300
-                                  focus:outline-none resize-none leading-relaxed"
+                                  focus:outline-none resize-none leading-relaxed
+                                  disabled:opacity-60"
                      />
                      <button
                        onClick={sendMessage}
-                       disabled={!messageText.trim()}
+                       disabled={!messageText.trim() || sending}
                        className={`flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-full
                                    transition-all duration-200
-                                   ${messageText.trim()
+                                   ${messageText.trim() && !sending
                                      ? 'bg-[#D4AF37] text-[#0F172A] hover:bg-[#C9A227] shadow-[0_4px_14px_rgba(212,175,55,0.4)] hover:-translate-y-px'
                                      : 'bg-slate-100 text-slate-300 cursor-not-allowed'}`}
                      >
