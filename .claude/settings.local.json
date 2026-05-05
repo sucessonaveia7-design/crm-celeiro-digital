@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(npm run *)",
+      "Bash(npx vite *)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :5173)",
+      "Bash(findstr :5174)",
+      "Bash(cat tailwind.config.js)",
+      "Bash(cat tailwind.config.ts)",
+      "Bash(start \"\" \"http://localhost:5173\")",
+      "Bash(node -e ' *)"
+    ]
+  }
+}

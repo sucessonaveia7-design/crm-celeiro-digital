@@ -1,0 +1,6 @@
+[dotenv@17.2.3] injecting env (5) from .env -- tip: ­ƒöä add secrets lifecycle management: https://dotenvx.com/ops
+=== AUTH MODULE LOADING ===
+SUPABASE_URL from process.env: [SET]
+SUPABASE_ANON_KEY from process.env: [SET]
+[dotenv@17.2.3] injecting env (0) from .env -- tip: ­ƒæÑ sync secrets across teammates & machines: https://dotenvx.com/ops
+­ƒÜÇ Server running on port 3001
