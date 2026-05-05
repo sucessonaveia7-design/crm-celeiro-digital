@@ -221,6 +221,44 @@ export default function Chat() {
     return () => listener.subscription.unsubscribe()
   }, [])
 
+  // Realtime: novas mensagens da conversa ativa
+  useEffect(() => {
+    if (!sel) return
+
+    const channel = supabase
+      .channel(`messages:${sel}`)
+      .on(
+        'postgres_changes',
+        {
+          event:  'INSERT',
+          schema: 'public',
+          table:  'messages',
+          filter: `conversation_id=eq.${sel}`,
+        },
+        (payload) => {
+          const incoming = payload.new as MessageAPI
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === incoming.id)) return prev
+            const updated = [...prev, incoming].sort(
+              (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+            )
+            setTimeout(() => {
+              const el = document.getElementById('chat-scroll')
+              if (el) el.scrollTop = el.scrollHeight
+            }, 50)
+            return updated
+          })
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR') {
+          console.error('[realtime] Falha ao conectar canal de mensagens')
+        }
+      })
+
+    return () => { supabase.removeChannel(channel) }
+  }, [sel])
+
   async function loadConversations() {
     const { data, error } = await supabase
       .from('conversations')
