@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\maicl\\\\Pictures\\\\crm saas celeiro digital\" -Recurse -Directory | Select-Object -First 30 | ForEach-Object { $_.FullName })",
-      "Bash(grep -E \"\\\\.\\(json|js\\)$\")"
+      "Bash(grep -E \"\\\\.\\(json|js\\)$\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\maicl\\\\Pictures\\\\crm saas celeiro digital\" -Recurse -Depth 2)",
+      "Bash(Select-Object FullName, PSIsContainer)",
+      "Bash(Format-Table -AutoSize)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\maicl\\\\Pictures\\\\crm saas celeiro digital\" -Recurse | Where-Object {$_.Extension -in @\\('.tsx', '.ts', '.jsx', '.js', '.json', '.md'\\)} | Select-Object FullName | Sort-Object FullName)"
     ]
   }
 }
