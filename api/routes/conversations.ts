@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 const router = Router();
 
 // GET /api/conversations
-router.get('/', async (req, res) => {
+router.get('/', async (_req, res) => {
   try {
     const { data, error } = await supabase
       .from('conversations')
@@ -41,26 +41,72 @@ router.get('/:id/messages', async (req, res) => {
 // POST /api/conversations/:id/messages
 router.post('/:id/messages', async (req, res) => {
   try {
-    const { id } = req.params;
-    const { sender_type, sender_id, content, message_type } = req.body;
+    console.log('[send_message] PARAMS:', req.params);
+    console.log('[send_message] BODY:',   req.body);
 
-    if (!content || content.trim() === '') {
+    const { id } = req.params;
+    const { content, message_type } = req.body;
+
+    if (!content || String(content).trim() === '') {
       return res.status(400).json({ error: 'Content is required' });
     }
 
-    const { data, error } = await supabase.rpc('send_message', {
-      p_conversation_id: id,
-      p_sender_type: sender_type,
-      p_sender_id: sender_id,
-      p_content: content,
-      p_message_type: message_type
-    });
+    // Fetch conversation to verify it exists and get church_id
+    const { data: conv, error: convError } = await supabase
+      .from('conversations')
+      .select('id, church_id')
+      .eq('id', id)
+      .single();
 
-    if (error) throw error;
-    res.json({ message_id: data });
+    if (convError || !conv) {
+      console.error('[send_message] Conversation not found:', id, convError);
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    console.log('[send_message] Conversation found, church_id:', conv.church_id);
+
+    const trimmed = String(content).trim();
+
+    const insertPayload: Record<string, unknown> = {
+      conversation_id: id,
+      church_id:       conv.church_id,
+      sender_type:     'user',
+      message_type:    message_type || 'text',
+      content:         trimmed,
+    };
+
+    console.log('[send_message] INSERT payload:', insertPayload);
+
+    const { data, error } = await supabase
+      .from('messages')
+      .insert(insertPayload)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[send_message] ERRO SUPABASE:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    console.log('[send_message] Mensagem inserida com sucesso, id:', data.id);
+
+    // Atualiza preview da conversa (falha silenciosa — não bloqueia resposta)
+    const { error: updateError } = await supabase
+      .from('conversations')
+      .update({
+        last_message:    trimmed,
+        last_message_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+
+    if (updateError) {
+      console.warn('[send_message] Falha ao atualizar preview da conversa:', updateError.message);
+    }
+
+    return res.status(201).json({ success: true, data });
   } catch (error: any) {
-    console.error('Error sending message:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('[send_message] Erro inesperado:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
