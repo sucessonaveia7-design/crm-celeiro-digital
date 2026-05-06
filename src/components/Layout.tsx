@@ -50,7 +50,7 @@ export default function Layout() {
       <div className="absolute top-0 left-0 w-full h-[500px] bg-gradient-to-b from-[#D4AF37]/5 dark:from-[#FFD700]/5 to-transparent pointer-events-none"></div>
       <div className="absolute -top-[300px] -right-[300px] w-[800px] h-[800px] bg-gradient-to-br from-[#D4AF37]/10 dark:from-[#FFD700]/10 to-transparent rounded-full blur-3xl opacity-50 pointer-events-none"></div>
 
-      <div className="relative z-10 flex h-full w-full overflow-hidden">
+      <div className="relative z-10 flex h-full w-full overflow-visible">
         <Sidebar />
         <div className="flex-1 flex flex-col h-full min-w-0 overflow-visible transition-[width] duration-[0.3s] ease-[ease] bg-transparent">
           <Header />
