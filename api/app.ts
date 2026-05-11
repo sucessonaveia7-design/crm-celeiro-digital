@@ -18,6 +18,7 @@ import setupRoutes from './routes/setup.ts'
 import conversationsRoutes from './routes/conversations.ts';
 import whatsappRoutes      from './routes/whatsapp.ts';
 import webhooksRoutes      from './routes/webhooks.ts';
+import debugRoutes         from './routes/debug.ts';
 
 // for esm mode
 const __filename = fileURLToPath(import.meta.url)
@@ -40,6 +41,7 @@ app.use('/api/setup', setupRoutes)
 app.use('/api/conversations', conversationsRoutes);
 app.use('/api/whatsapp',     whatsappRoutes);
 app.use('/api/webhooks',     webhooksRoutes);
+app.use('/api/debug',        debugRoutes);
 
 /**
  * health

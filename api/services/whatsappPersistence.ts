@@ -1,4 +1,9 @@
-import { supabaseAdmin as supabase } from '../lib/supabase.ts';
+import { supabaseAdmin } from '../lib/supabase.ts';
+
+// Alias local — todas as queries deste módulo usam supabaseAdmin (service_role).
+const supabase = supabaseAdmin;
+
+console.log('[persist] módulo carregado — usando supabaseAdmin (service_role)');
 
 const CHURCH_ID = 'f6266811-ac76-43db-bb18-ffd1cda0a6f7';
 
@@ -235,6 +240,9 @@ export async function persistIncomingMessage(
   content:  string,
   msgType:  string,
 ): Promise<void> {
+  // Confirma client usado — aparece em cada webhook recebido.
+  console.log('[persist] usando supabaseAdmin (service_role)');
+
   // Log de entrada — confirma que a função foi chamada.
   console.log('[persist] ── persistIncomingMessage iniciado ──', {
     instance,
