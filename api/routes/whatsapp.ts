@@ -322,6 +322,61 @@ router.delete('/instance', async (req: Request, res: Response) => {
   }
 });
 
+// ── GET /api/whatsapp/conversations ──────────────────────────────────────────
+// Lista conversas WhatsApp ordenadas por atividade recente.
+router.get('/conversations', async (_req: Request, res: Response) => {
+  try {
+    const { data, error } = await supabase
+      .from('conversations')
+      .select(`
+        id,
+        status,
+        unread_count,
+        last_message,
+        last_message_at,
+        whatsapp_jid,
+        contacts ( id, name, phone )
+      `)
+      .not('whatsapp_jid', 'is', null)
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .limit(50);
+
+    if (error) {
+      console.error('[whatsapp/conversations] Supabase error:', error.message);
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    res.json({ success: true, data: data ?? [] });
+  } catch (err: any) {
+    console.error('[whatsapp/conversations] unexpected error:', err?.message);
+    res.status(500).json({ success: false, error: 'Erro interno' });
+  }
+});
+
+// ── GET /api/whatsapp/messages/:conversationId ────────────────────────────────
+// Retorna as mensagens de uma conversa, ordenadas por data de criação.
+router.get('/messages/:conversationId', async (req: Request, res: Response) => {
+  const { conversationId } = req.params;
+  if (!conversationId) return res.status(400).json({ success: false, error: 'conversationId obrigatório' });
+
+  try {
+    const { data, error } = await supabase
+      .from('messages')
+      .select('id, conversation_id, sender_type, message_type, content, created_at')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true })
+      .limit(100);
+
+    if (error) {
+      console.error('[whatsapp/messages] Supabase error:', error.message);
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    res.json({ success: true, data: data ?? [] });
+  } catch (err: any) {
+    console.error('[whatsapp/messages] unexpected error:', err?.message);
+    res.status(500).json({ success: false, error: 'Erro interno' });
+  }
+});
+
 // ── POST /api/whatsapp/webhook ────────────────────────────────────────────────
 // Recebe eventos push da Evolution API.
 // Configurar no Railway: https://seu-backend.com/api/whatsapp/webhook

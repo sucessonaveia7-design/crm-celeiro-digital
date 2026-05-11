@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { 
   Smartphone, QrCode, RefreshCw, PowerOff, ArrowLeft,
@@ -7,6 +7,36 @@ import {
 } from 'lucide-react';
 import { useThemeStore } from '../store/themeStore';
 import { useKanbanStore } from '../store/kanbanStore';
+import { supabase } from '@/lib/supabase';
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface WaContact {
+  id: string;
+  name: string;
+  phone: string;
+}
+
+interface WaConversation {
+  id: string;
+  status: string | null;
+  unread_count: number | null;
+  last_message: string | null;
+  last_message_at: string | null;
+  whatsapp_jid: string | null;
+  contacts: WaContact | WaContact[] | null;
+}
+
+interface WaMessage {
+  id: string;
+  conversation_id: string;
+  sender_type: string;
+  message_type: string;
+  content: string | null;
+  created_at: string;
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function WhatsApp() {
   const { isDarkMode } = useThemeStore();
@@ -143,6 +173,105 @@ export default function WhatsApp() {
     setMessageInput(prev => prev ? `${prev} ${text}` : text);
     setShowQuickReplyMenu(false);
   };
+
+  // ── WhatsApp Chat Real ─────────────────────────────────────────────────────
+
+  const [waConversations, setWaConversations] = useState<WaConversation[]>([]);
+  const [waMessages,      setWaMessages]      = useState<WaMessage[]>([]);
+  const [waSearch,        setWaSearch]        = useState('');
+  const [selectedConvId,  setSelectedConvId]  = useState<string | null>(null);
+  const [waConvsLoading,  setWaConvsLoading]  = useState(false);
+  const [waMsgsLoading,   setWaMsgsLoading]   = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  const getContactName = (conv: WaConversation): string => {
+    const c = Array.isArray(conv.contacts) ? conv.contacts[0] : conv.contacts;
+    return c?.name ?? conv.whatsapp_jid?.split('@')[0] ?? 'Desconhecido';
+  };
+
+  const getContactPhone = (conv: WaConversation): string => {
+    const c = Array.isArray(conv.contacts) ? conv.contacts[0] : conv.contacts;
+    return c?.phone ?? conv.whatsapp_jid?.split('@')[0] ?? '';
+  };
+
+  const formatTime = (iso: string | null): string => {
+    if (!iso) return '';
+    return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const getInitials = (name: string): string =>
+    name.split(' ').map(p => p[0]).join('').substring(0, 2).toUpperCase();
+
+  const loadWaConversations = useCallback(async () => {
+    if (waConvsLoading) return;
+    setWaConvsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('conversations')
+        .select('id, status, unread_count, last_message, last_message_at, whatsapp_jid, contacts(id, name, phone)')
+        .not('whatsapp_jid', 'is', null)
+        .order('last_message_at', { ascending: false, nullsFirst: false })
+        .limit(50);
+      if (!error && data) {
+        setWaConversations(data as WaConversation[]);
+        setSelectedConvId(prev => prev ?? (data[0]?.id ?? null));
+      }
+    } finally {
+      setWaConvsLoading(false);
+    }
+  }, []);
+
+  const loadWaMessages = useCallback(async (convId: string) => {
+    setWaMsgsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('id, conversation_id, sender_type, message_type, content, created_at')
+        .eq('conversation_id', convId)
+        .order('created_at', { ascending: true })
+        .limit(100);
+      if (!error && data) setWaMessages(data as WaMessage[]);
+    } finally {
+      setWaMsgsLoading(false);
+    }
+  }, []);
+
+  // Polling de conversas enquanto a aba mensagens está ativa
+  useEffect(() => {
+    if (activeTab !== 'mensagens') return;
+    loadWaConversations();
+    const interval = setInterval(loadWaConversations, 3000);
+    return () => clearInterval(interval);
+  }, [activeTab, loadWaConversations]);
+
+  // Carrega mensagens quando muda a conversa selecionada
+  useEffect(() => {
+    if (!selectedConvId) return;
+    loadWaMessages(selectedConvId);
+  }, [selectedConvId, loadWaMessages]);
+
+  // Realtime — novas mensagens da conversa ativa
+  useEffect(() => {
+    if (!selectedConvId) return;
+    const channel = supabase
+      .channel(`wa-msgs:${selectedConvId}`)
+      .on('postgres_changes', {
+        event:  'INSERT',
+        schema: 'public',
+        table:  'messages',
+        filter: `conversation_id=eq.${selectedConvId}`,
+      }, (payload) => {
+        const incoming = payload.new as WaMessage;
+        setWaMessages(prev => prev.some(m => m.id === incoming.id) ? prev : [...prev, incoming]);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [selectedConvId]);
+
+  // Auto-scroll ao receber nova mensagem
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [waMessages]);
 
   return (
     <div className="p-8 max-w-[1600px] mx-auto w-full">
@@ -411,150 +540,208 @@ export default function WhatsApp() {
 
         {activeTab === 'mensagens' && (
           <div className="bg-white dark:bg-[#0F172A] rounded-[20px] shadow-[0_8px_30px_rgba(15,23,42,0.04)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.2)] border border-slate-100 dark:border-slate-800 flex h-[600px] overflow-hidden">
-            {/* Lista de Contatos */}
+
+            {/* ── Lista de Conversas ── */}
             <div className="w-1/3 border-r border-slate-100 dark:border-slate-800 flex flex-col">
               <div className="p-4 border-b border-slate-100 dark:border-slate-800">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                  <input 
-                    type="text" 
-                    placeholder="Buscar conversa..." 
+                  <input
+                    type="text"
+                    value={waSearch}
+                    onChange={e => setWaSearch(e.target.value)}
+                    placeholder="Buscar conversa..."
                     className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-[10px] text-[14px] text-[#0F172A] dark:text-white focus:ring-2 focus:ring-[#D4AF37]/50 focus:border-[#D4AF37] outline-none"
                   />
                 </div>
               </div>
+
               <div className="flex-1 overflow-y-auto">
-                {contacts.map(contact => (
-                  <button 
-                    key={contact.id}
-                    onClick={() => handleSelectContact(contact.id)}
-                    className={`w-full p-4 flex items-start gap-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-100 dark:border-slate-800/50 text-left
-                      ${selectedContact === contact.id ? 'bg-slate-50 dark:bg-slate-800/80 border-l-4 border-l-[#D4AF37]' : 'border-l-4 border-l-transparent'}
-                    `}
-                  >
-                    <div className="w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
-                      <User className="text-slate-500 dark:text-slate-400" size={20} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-start mb-1">
-                        <h4 className="font-[600] text-[#0F172A] dark:text-white truncate">{contact.name}</h4>
-                        <span className="text-[12px] text-[#64748B] dark:text-slate-500 whitespace-nowrap ml-2">{contact.time}</span>
-                      </div>
-                      <p className="text-[13px] text-[#64748B] dark:text-slate-400 truncate">{contact.lastMessage}</p>
-                    </div>
-                    {contact.unread > 0 && (
-                      <div className="w-5 h-5 rounded-full bg-[#D4AF37] text-white text-[11px] font-[700] flex items-center justify-center mt-1">
-                        {contact.unread}
-                      </div>
-                    )}
-                  </button>
-                ))}
+                {waConvsLoading && waConversations.length === 0 && (
+                  <div className="flex items-center justify-center h-24 text-[13px] text-slate-400">
+                    Carregando conversas...
+                  </div>
+                )}
+
+                {!waConvsLoading && waConversations.length === 0 && (
+                  <div className="flex flex-col items-center justify-center h-full py-12 text-center px-4">
+                    <MessageCircle size={36} className="text-slate-300 dark:text-slate-600 mb-3" />
+                    <p className="font-[600] text-[#0F172A] dark:text-white text-[14px] mb-1">Nenhuma conversa ainda</p>
+                    <p className="text-[12px] text-slate-400">Quando alguém enviar uma mensagem pelo WhatsApp, ela aparecerá aqui.</p>
+                  </div>
+                )}
+
+                {waConversations
+                  .filter(conv => {
+                    if (!waSearch.trim()) return true;
+                    const q = waSearch.toLowerCase();
+                    return (
+                      getContactName(conv).toLowerCase().includes(q) ||
+                      (conv.last_message ?? '').toLowerCase().includes(q)
+                    );
+                  })
+                  .map(conv => {
+                    const name     = getContactName(conv);
+                    const initials = getInitials(name);
+                    const unread   = conv.unread_count ?? 0;
+                    const isActive = selectedConvId === conv.id;
+                    return (
+                      <button
+                        key={conv.id}
+                        onClick={() => setSelectedConvId(conv.id)}
+                        className={`w-full p-4 flex items-start gap-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-100 dark:border-slate-800/50 text-left ${
+                          isActive
+                            ? 'bg-slate-50 dark:bg-slate-800/80 border-l-4 border-l-[#D4AF37]'
+                            : 'border-l-4 border-l-transparent'
+                        }`}
+                      >
+                        {/* Avatar com iniciais */}
+                        <div className="w-12 h-12 rounded-full bg-[#D4AF37]/20 flex items-center justify-center flex-shrink-0">
+                          <span className="text-[13px] font-[700] text-[#D4AF37]">{initials}</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between items-start mb-1">
+                            <h4 className="font-[600] text-[#0F172A] dark:text-white truncate text-[14px]">{name}</h4>
+                            <span className="text-[11px] text-slate-400 whitespace-nowrap ml-2">
+                              {formatTime(conv.last_message_at)}
+                            </span>
+                          </div>
+                          <p className="text-[13px] text-slate-400 truncate">{conv.last_message ?? ''}</p>
+                        </div>
+                        {unread > 0 && (
+                          <div className="w-5 h-5 rounded-full bg-[#D4AF37] text-white text-[11px] font-[700] flex items-center justify-center mt-1 flex-shrink-0">
+                            {unread}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
               </div>
             </div>
 
-            {/* Chat Area */}
+            {/* ── Área de Chat ── */}
             <div className="flex-1 flex flex-col bg-slate-50 dark:bg-[#020617]">
-              {selectedContact ? (
-                <>
-                  <div className="p-4 bg-white dark:bg-[#0F172A] border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center">
-                        <User className="text-slate-500" size={20} />
+              {selectedConvId ? (() => {
+                const activeConv = waConversations.find(c => c.id === selectedConvId);
+                const name  = activeConv ? getContactName(activeConv) : '';
+                const phone = activeConv ? getContactPhone(activeConv) : '';
+                return (
+                  <>
+                    {/* Header */}
+                    <div className="p-4 bg-white dark:bg-[#0F172A] border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-[#D4AF37]/20 flex items-center justify-center">
+                          <span className="text-[12px] font-[700] text-[#D4AF37]">{getInitials(name)}</span>
+                        </div>
+                        <div>
+                          <h3 className="font-[600] text-[#0F172A] dark:text-white text-[14px]">{name}</h3>
+                          <p className="text-[12px] text-slate-400">{phone}</p>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="font-[600] text-[#0F172A] dark:text-white">{contacts.find(c => c.id === selectedContact)?.name}</h3>
-                        <p className="text-[12px] text-[#64748B] dark:text-slate-400">{contacts.find(c => c.id === selectedContact)?.number}</p>
+                      <div className="flex items-center gap-1">
+                        <div className="w-2 h-2 rounded-full bg-green-400" />
+                        <span className="text-[12px] text-slate-400">WhatsApp</span>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="flex-1 p-6 overflow-y-auto flex flex-col gap-4">
-                    {chatMessages.map(msg => (
-                      <div key={msg.id} className={`flex ${msg.sender === 'me' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[70%] p-3 rounded-[16px] ${
-                          msg.sender === 'me' 
-                            ? 'bg-[#D4AF37] text-white rounded-tr-none' 
-                            : 'bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 text-[#0F172A] dark:text-slate-200 rounded-tl-none'
-                        }`}>
-                          <p className="text-[14px] leading-relaxed">{msg.text}</p>
-                          <div className={`text-[11px] mt-1 flex items-center justify-end gap-1 ${msg.sender === 'me' ? 'text-white/80' : 'text-slate-400'}`}>
-                            {msg.time}
-                            {msg.sender === 'me' && <CheckCheck size={14} />}
+                    {/* Mensagens */}
+                    <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3">
+                      {waMsgsLoading && waMessages.length === 0 && (
+                        <div className="flex items-center justify-center h-16 text-[13px] text-slate-400">
+                          Carregando mensagens...
+                        </div>
+                      )}
+
+                      {!waMsgsLoading && waMessages.length === 0 && (
+                        <div className="flex flex-col items-center justify-center flex-1 text-center">
+                          <MessageCircle size={32} className="text-slate-300 dark:text-slate-600 mb-2" />
+                          <p className="text-[13px] text-slate-400">Nenhuma mensagem nesta conversa.</p>
+                        </div>
+                      )}
+
+                      {waMessages.map(msg => {
+                        const isAgent = msg.sender_type === 'agent' || msg.sender_type === 'user';
+                        return (
+                          <div key={msg.id} className={`flex ${isAgent ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[70%] px-4 py-2.5 rounded-[16px] ${
+                              isAgent
+                                ? 'bg-[#D4AF37] text-white rounded-tr-none'
+                                : 'bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 text-[#0F172A] dark:text-slate-200 rounded-tl-none'
+                            }`}>
+                              <p className="text-[14px] leading-relaxed whitespace-pre-wrap">
+                                {msg.content ?? <span className="italic opacity-60">(mídia)</span>}
+                              </p>
+                              <div className={`text-[11px] mt-1 flex items-center justify-end gap-1 ${isAgent ? 'text-white/70' : 'text-slate-400'}`}>
+                                {formatTime(msg.created_at)}
+                                {isAgent && <CheckCheck size={13} />}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <div ref={chatBottomRef} />
+                    </div>
+
+                    {/* Input */}
+                    <div className="p-4 bg-white dark:bg-[#0F172A] border-t border-slate-100 dark:border-slate-800 relative">
+                      {showQuickReplyMenu && (
+                        <div className="absolute bottom-full left-0 mb-2 w-72 bg-white dark:bg-[#1E293B] rounded-[16px] shadow-lg border border-slate-100 dark:border-slate-800 overflow-hidden z-10">
+                          <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-[#0F172A] flex justify-between items-center">
+                            <span className="text-[13px] font-[600] text-[#0F172A] dark:text-white flex items-center gap-2">
+                              <Zap size={14} className="text-[#D4AF37]" /> Respostas Rápidas
+                            </span>
+                            <button onClick={() => setShowQuickReplyMenu(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                              <X size={14} />
+                            </button>
+                          </div>
+                          <div className="max-h-60 overflow-y-auto p-2">
+                            {quickMessages.length === 0
+                              ? <div className="text-center p-4 text-[13px] text-slate-500">Nenhuma mensagem rápida salva.</div>
+                              : quickMessages.map(msg => (
+                                <button key={msg.id} onClick={() => handleSelectQuickMessage(msg.text)}
+                                  className="w-full text-left p-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded-[10px] transition-colors mb-1 last:mb-0">
+                                  <div className="text-[13px] font-[600] text-[#0F172A] dark:text-white mb-1">{msg.title}</div>
+                                  <div className="text-[12px] text-slate-400 truncate">{msg.text}</div>
+                                </button>
+                              ))
+                            }
                           </div>
                         </div>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setShowQuickReplyMenu(!showQuickReplyMenu)}
+                          className={`p-2 rounded-full transition-colors ${showQuickReplyMenu ? 'text-[#D4AF37] bg-[#D4AF37]/10' : 'text-slate-400 hover:text-[#D4AF37] hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                          title="Mensagens Rápidas"
+                        >
+                          <Zap size={20} />
+                        </button>
+                        <button className="p-2 text-slate-400 hover:text-[#D4AF37] transition-colors rounded-full hover:bg-slate-100 dark:hover:bg-slate-800">
+                          <Paperclip size={20} />
+                        </button>
+                        <input
+                          type="text"
+                          value={messageInput}
+                          onChange={e => setMessageInput(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') handleSendMessage(); }}
+                          placeholder="Digite uma mensagem..."
+                          className="flex-1 py-2.5 px-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-[12px] text-[14px] text-[#0F172A] dark:text-white focus:outline-none focus:border-[#D4AF37]"
+                        />
+                        <button
+                          onClick={handleSendMessage}
+                          className="p-2.5 bg-[#D4AF37] text-white rounded-[12px] hover:bg-[#C5A030] transition-colors shadow-[0_4px_10px_rgba(212,175,55,0.3)]"
+                        >
+                          <Send size={18} className="ml-0.5" />
+                        </button>
                       </div>
-                    ))}
-                  </div>
-
-                  <div className="p-4 bg-white dark:bg-[#0F172A] border-t border-slate-100 dark:border-slate-800 relative">
-                    {/* Menu de Respostas Rápidas */}
-                    {showQuickReplyMenu && (
-                      <div className="absolute bottom-full left-0 mb-2 w-72 bg-white dark:bg-[#1E293B] rounded-[16px] shadow-lg border border-slate-100 dark:border-slate-800 overflow-hidden z-10">
-                        <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-[#0F172A] flex justify-between items-center">
-                          <span className="text-[13px] font-[600] text-[#0F172A] dark:text-white flex items-center gap-2">
-                            <Zap size={14} className="text-[#D4AF37]" />
-                            Respostas Rápidas
-                          </span>
-                          <button onClick={() => setShowQuickReplyMenu(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
-                            <X size={14} />
-                          </button>
-                        </div>
-                        <div className="max-h-60 overflow-y-auto p-2">
-                          {quickMessages.length === 0 ? (
-                            <div className="text-center p-4 text-[13px] text-slate-500">
-                              Nenhuma mensagem rápida salva.
-                            </div>
-                          ) : (
-                            quickMessages.map(msg => (
-                              <button 
-                                key={msg.id}
-                                onClick={() => handleSelectQuickMessage(msg.text)}
-                                className="w-full text-left p-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded-[10px] transition-colors mb-1 last:mb-0"
-                              >
-                                <div className="text-[13px] font-[600] text-[#0F172A] dark:text-white mb-1">{msg.title}</div>
-                                <div className="text-[12px] text-[#64748B] dark:text-slate-400 truncate">{msg.text}</div>
-                              </button>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="flex items-center gap-2">
-                      <button 
-                        onClick={() => setShowQuickReplyMenu(!showQuickReplyMenu)}
-                        className={`p-2 transition-colors rounded-full ${showQuickReplyMenu ? 'text-[#D4AF37] bg-[#D4AF37]/10' : 'text-slate-400 hover:text-[#D4AF37] hover:bg-slate-100 dark:hover:bg-slate-800'}`}
-                        title="Mensagens Rápidas"
-                      >
-                        <Zap size={20} />
-                      </button>
-                      <button className="p-2 text-slate-400 hover:text-[#D4AF37] transition-colors rounded-full hover:bg-slate-100 dark:hover:bg-slate-800">
-                        <Paperclip size={20} />
-                      </button>
-                      <input 
-                        type="text" 
-                        value={messageInput}
-                        onChange={(e) => setMessageInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            handleSendMessage();
-                          }
-                        }}
-                        placeholder="Digite uma mensagem..." 
-                        className="flex-1 py-2.5 px-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-[12px] text-[14px] text-[#0F172A] dark:text-white focus:outline-none focus:border-[#D4AF37]"
-                      />
-                      <button 
-                        onClick={handleSendMessage}
-                        className="p-2.5 bg-[#D4AF37] text-white rounded-[12px] hover:bg-[#C5A030] transition-colors shadow-[0_4px_10px_rgba(212,175,55,0.3)]"
-                      >
-                        <Send size={18} className="ml-1" />
-                      </button>
                     </div>
-                  </div>
-                </>
-              ) : (
-                <div className="flex-1 flex items-center justify-center text-[#64748B] dark:text-slate-500">
-                  Selecione uma conversa para começar
+                  </>
+                );
+              })() : (
+                <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
+                  <MessageCircle size={48} className="text-slate-300 dark:text-slate-700 mb-4" />
+                  <p className="font-[600] text-[#0F172A] dark:text-white mb-1">Selecione uma conversa</p>
+                  <p className="text-[13px] text-slate-400">Clique em uma conversa à esquerda para ver as mensagens.</p>
                 </div>
               )}
             </div>
