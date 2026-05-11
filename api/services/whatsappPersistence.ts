@@ -164,39 +164,43 @@ async function insertMessage(opts: {
   msgType:         string;
   fromMe:          boolean;
   evolutionMsgId:  string;
+  rawData:         Record<string, any>;
 }): Promise<boolean> {
-  console.log(`[persist][message] inserindo tipo="${opts.msgType}" fromMe=${opts.fromMe}`);
-
+  // Schema real de public.messages:
+  // id, conversation_id, sender_type, sender_id, message_type,
+  // content, media_url, metadata, evolution_message_id, created_at
+  // Colunas NÃO existentes: church_id → nunca incluir.
   const payload: Record<string, unknown> = {
     conversation_id:      opts.conversationId,
-    church_id:            CHURCH_ID,
-    sender_type:          opts.fromMe ? 'user' : 'contact',
-    message_type:         opts.msgType,
+    sender_type:          opts.fromMe ? 'agent' : 'contact',
+    message_type:         opts.msgType || 'text',
     content:              opts.content || null,
+    metadata:             opts.rawData,
     evolution_message_id: opts.evolutionMsgId,
   };
+
+  console.log('[persist][message] payload insert:', {
+    conversation_id:      payload.conversation_id,
+    sender_type:          payload.sender_type,
+    message_type:         payload.message_type,
+    content_preview:      String(payload.content ?? '').slice(0, 80),
+    has_metadata:         !!payload.metadata,
+    evolution_message_id: payload.evolution_message_id,
+  });
 
   const { error } = await supabase.from('messages').insert(payload);
 
   if (error) {
-    // evolution_message_id não existe — migration não foi rodada
-    if (error.code === '42703' && String(error.message).includes('evolution_message_id')) {
-      console.warn(
-        '[persist][message] coluna evolution_message_id NÃO EXISTE. ' +
-        'Execute a migration 20260511_whatsapp_persistence.sql. ' +
-        'Tentando sem ela (sem proteção contra duplicatas).'
-      );
-      const { evolution_message_id: _drop, ...payloadWithout } = payload;
-      const { error: e2 } = await supabase.from('messages').insert(payloadWithout);
-      if (e2) { logSupabaseError('message:insert-fallback', e2); return false; }
-      console.log('[persist][message] inserida (sem evolution_message_id)');
-      return true;
-    }
     if (error.code === '23505') {
       console.log('[persist][message] duplicata — já persistida anteriormente');
       return false;
     }
-    logSupabaseError('message:insert', error);
+    console.error('[persist][message] ERRO no insert:', {
+      code:    error.code,
+      message: error.message,
+      details: error.details,
+      hint:    error.hint,
+    });
     return false;
   }
 
@@ -290,6 +294,7 @@ export async function persistIncomingMessage(
     msgType,
     fromMe,
     evolutionMsgId: messageId,
+    rawData:        data,
   });
 
   if (inserted) {
