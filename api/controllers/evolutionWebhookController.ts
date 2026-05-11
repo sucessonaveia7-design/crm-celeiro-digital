@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
+import { persistIncomingMessage } from '../services/whatsappPersistence.ts';
 
-// ── Tipos ─────────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface EvolutionWebhookPayload {
   event?:    string;
@@ -11,30 +12,24 @@ interface EvolutionWebhookPayload {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const DEV = process.env.NODE_ENV !== 'production';
-
-function log(label: string, ...args: unknown[]): void {
-  if (DEV) console.log(`[EvolutionWebhook] ${label}`, ...args);
-}
-
-// Normaliza nomes de evento para um formato único (ex: "messages.upsert" ou "MESSAGES_UPSERT" → "messages.upsert").
+// Normaliza "MESSAGES_UPSERT" → "messages.upsert"
 function normalizeEvent(raw: string): string {
   return raw.toLowerCase().replace(/_/g, '.');
 }
 
-// Extrai o tipo de mensagem do payload Baileys.
+// Extrai tipo de mensagem do payload Baileys.
 function extractMessageType(data: Record<string, any>): string {
   const msg = data?.message ?? {};
-  if (msg.conversation)           return 'text';
-  if (msg.extendedTextMessage)    return 'text';
-  if (msg.imageMessage)           return 'image';
-  if (msg.videoMessage)           return 'video';
-  if (msg.audioMessage)           return 'audio';
-  if (msg.documentMessage)        return 'document';
-  if (msg.stickerMessage)         return 'sticker';
-  if (msg.locationMessage)        return 'location';
-  if (msg.contactMessage)         return 'contact';
-  if (msg.reactionMessage)        return 'reaction';
+  if (msg.conversation)        return 'text';
+  if (msg.extendedTextMessage) return 'text';
+  if (msg.imageMessage)        return 'image';
+  if (msg.videoMessage)        return 'video';
+  if (msg.audioMessage)        return 'audio';
+  if (msg.documentMessage)     return 'document';
+  if (msg.stickerMessage)      return 'sticker';
+  if (msg.locationMessage)     return 'location';
+  if (msg.contactMessage)      return 'contact';
+  if (msg.reactionMessage)     return 'reaction';
   return data?.messageType ?? 'unknown';
 }
 
@@ -42,68 +37,62 @@ function extractMessageType(data: Record<string, any>): string {
 function extractContent(data: Record<string, any>): string {
   const msg = data?.message ?? {};
   return (
-    msg?.conversation                      ??
-    msg?.extendedTextMessage?.text         ??
-    msg?.imageMessage?.caption             ??
-    msg?.videoMessage?.caption             ??
-    msg?.documentMessage?.caption          ??
+    msg?.conversation                 ??
+    msg?.extendedTextMessage?.text    ??
+    msg?.imageMessage?.caption        ??
+    msg?.videoMessage?.caption        ??
+    msg?.documentMessage?.caption     ??
     ''
   );
 }
 
-// ── Handlers por evento ───────────────────────────────────────────────────────
+// ── handlers ──────────────────────────────────────────────────────────────────
 
-function handleMessagesUpsert(instance: string, data: Record<string, any>): void {
-  const key        = data?.key ?? {};
-  const remoteJid  = key?.remoteJid  as string | undefined;
-  const fromMe     = key?.fromMe     as boolean | undefined;
-  const messageId  = key?.id         as string | undefined;
-  const pushName   = data?.pushName  as string | undefined;
-  const msgType    = extractMessageType(data);
-  const content    = extractContent(data);
+async function handleMessagesUpsert(
+  instance: string,
+  rawData:  unknown,
+): Promise<void> {
+  // rawData pode ser objeto único OU array (depende da versão da Evolution API).
+  const items: Record<string, any>[] = Array.isArray(rawData)
+    ? rawData
+    : [rawData as Record<string, any>];
 
-  log('MESSAGES_UPSERT', {
-    event:       'messages.upsert',
-    instance,
-    remoteJid,
-    fromMe,
-    messageId,
-    pushName,
-    messageType: msgType,
-    content:     content.slice(0, 120) || '(mídia/sem texto)',
-  });
+  console.log(
+    `[webhook] messages.upsert instance="${instance}" itens=${items.length}`,
+    'keys do primeiro item:', Object.keys(items[0] ?? {}),
+  );
 
-  // TODO: persistir em conversations/messages via Supabase
+  for (const data of items) {
+    const msgType = extractMessageType(data);
+    const content = extractContent(data);
+
+    console.log('[webhook] processando item:', {
+      remoteJid:  data?.key?.remoteJid,
+      fromMe:     data?.key?.fromMe,
+      messageId:  data?.key?.id,
+      pushName:   data?.pushName,
+      msgType,
+      contentPreview: content.slice(0, 80) || '(sem texto)',
+    });
+
+    await persistIncomingMessage(instance, data, content, msgType);
+  }
 }
 
 function handleConnectionUpdate(instance: string, data: Record<string, any>): void {
   const state = data?.state ?? data?.connection ?? 'unknown';
-
-  log('CONNECTION_UPDATE', {
-    event:    'connection.update',
-    instance,
-    state,
-  });
-
-  // TODO: atualizar status da instância no banco
+  console.log(`[webhook] connection.update instance="${instance}" state="${state}"`);
 }
 
 function handleQrcodeUpdated(instance: string, data: Record<string, any>): void {
   const hasQr = !!(data?.base64 ?? data?.code ?? data?.qrcode);
-
-  log('QRCODE_UPDATED', {
-    event:    'qrcode.updated',
-    instance,
-    hasQr,
-  });
-
-  // TODO: transmitir QR via WebSocket/Supabase Realtime se necessário
+  console.log(`[webhook] qrcode.updated instance="${instance}" hasQr=${hasQr}`);
 }
 
-// ── Handler principal ─────────────────────────────────────────────────────────
+// ── handler principal ─────────────────────────────────────────────────────────
 
 export async function evolutionWebhookHandler(req: Request, res: Response): Promise<void> {
-  // Responder imediatamente — Evolution API cancela a requisição após timeout.
+  // Responder imediatamente — Evolution API cancela após timeout.
   res.status(200).json({ success: true });
 
   const payload  = req.body as EvolutionWebhookPayload;
@@ -111,8 +100,17 @@ export async function evolutionWebhookHandler(req: Request, res: Response): Prom
   const instance = payload?.instance ?? 'unknown';
   const data     = payload?.data ?? {};
 
+  console.log('[webhook] recebido:', {
+    event:    rawEvent,
+    instance,
+    dataType: Array.isArray(payload?.data) ? 'array' : typeof payload?.data,
+    dataKeys: payload?.data && !Array.isArray(payload.data)
+      ? Object.keys(payload.data).slice(0, 10)
+      : `array[${Array.isArray(payload?.data) ? payload.data.length : 0}]`,
+  });
+
   if (!rawEvent) {
-    log('payload sem campo event recebido:', JSON.stringify(payload).slice(0, 200));
+    console.warn('[webhook] payload sem campo event:', JSON.stringify(payload).slice(0, 300));
     return;
   }
 
@@ -121,7 +119,7 @@ export async function evolutionWebhookHandler(req: Request, res: Response): Prom
   try {
     switch (event) {
       case 'messages.upsert':
-        handleMessagesUpsert(instance, data);
+        await handleMessagesUpsert(instance, payload?.data ?? {});
         break;
 
       case 'connection.update':
@@ -135,14 +133,13 @@ export async function evolutionWebhookHandler(req: Request, res: Response): Prom
       case 'send.message':
       case 'messages.update':
       case 'messages.delete':
-        log(`${event} (ignorado por ora)`, { instance });
+        console.log(`[webhook] ${event} ignorado`);
         break;
 
       default:
-        log(`evento não mapeado: ${event}`, { instance });
+        console.log(`[webhook] evento não mapeado: "${event}"`);
     }
   } catch (err: any) {
-    // Nunca deixar exceção chegar ao Express depois do res.json() acima.
-    console.error('[EvolutionWebhook] erro interno ao processar evento:', err?.message ?? err);
+    console.error('[webhook] erro interno ao processar evento:', err?.message ?? err);
   }
 }
