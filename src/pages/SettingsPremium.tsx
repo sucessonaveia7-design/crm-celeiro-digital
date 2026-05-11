@@ -1,4 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+
+// Normaliza qualquer string de estado da Evolution API para os dois estados possíveis do modal.
+// Centralizar aqui evita condicionais espalhadas pelo componente.
+function normalizeConnectionState(raw: string | undefined): 'connected' | 'idle' {
+  if (!raw) return 'idle';
+  const s = raw.toLowerCase();
+  if (s === 'open' || s === 'connected') return 'connected';
+  return 'idle';
+}
 
 export default function SettingsPremium() {
   const [activeTab, setActiveTab] = useState('igreja');
@@ -8,31 +17,173 @@ export default function SettingsPremium() {
   const [whatsappConnectionStatus, setWhatsappConnectionStatus] = useState<'idle' | 'loading' | 'qr_ready' | 'connected' | 'error'>('idle');
   const [whatsappQrCode,           setWhatsappQrCode]           = useState<string | null>(null);
   const [whatsappError,            setWhatsappError]            = useState<string | null>(null);
+  const [whatsappInstance,         setWhatsappInstance]         = useState<string>('celeiro-teste-001');
+  // Estado persistente para o card (independente do modal estar aberto ou não).
+  const [whatsappCardConnected,    setWhatsappCardConnected]    = useState(false);
+
+  // Ref unificado: segura tanto o intervalId do polling de QR quanto o de status.
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
 
   const closeWhatsAppModal = () => {
+    stopPolling();
     setIsWhatsAppModalOpen(false);
+    // Reseta para idle — o effect de modal-open vai restaurar o estado real na próxima abertura.
+    // Reseta QR e erro sempre, mas não reseta o card (whatsappCardConnected persiste).
     setWhatsappConnectionStatus('idle');
     setWhatsappQrCode(null);
     setWhatsappError(null);
   };
 
+  // Polling de status (a cada 3s): verifica se o usuário já escaneou o QR.
+  const startStatusPolling = (instanceName: string) => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const res  = await fetch(`/api/whatsapp/status?instanceName=${encodeURIComponent(instanceName)}`);
+        const data = await res.json() as { success: boolean; state?: string };
+        if (data.success && normalizeConnectionState(data.state) === 'connected') {
+          stopPolling();
+          setWhatsappConnectionStatus('connected');
+          setWhatsappCardConnected(true);
+          setWhatsappQrCode(null);
+          if (import.meta.env.DEV) console.log('[WhatsApp] QR escaneado — instância conectada:', instanceName);
+        }
+      } catch { /* silencioso */ }
+    }, 3000);
+  };
+
+  // Polling de QR (a cada 3s): usado quando o backend retorna 202.
+  // Para automaticamente ao obter o QR ou após 60s (timeout).
+  const startQrPolling = (instanceName: string) => {
+    stopPolling();
+    const deadline = Date.now() + 60_000;
+
+    pollRef.current = setInterval(async () => {
+      if (Date.now() > deadline) {
+        stopPolling();
+        setWhatsappConnectionStatus('error');
+        setWhatsappError('Tempo esgotado ao aguardar QR Code. Tente novamente.');
+        return;
+      }
+      try {
+        // cache: 'no-store' + parâmetro ?t= evita 304 do browser e do Vite proxy
+        const url = `/api/whatsapp/qrcode?instanceName=${encodeURIComponent(instanceName)}&t=${Date.now()}`;
+        const res  = await fetch(url, { cache: 'no-store' });
+        const data = await res.json() as { success: boolean; qrCode?: string | null };
+        if (data.success && data.qrCode) {
+          stopPolling();
+          setWhatsappQrCode(data.qrCode);
+          setWhatsappConnectionStatus('qr_ready');
+          startStatusPolling(instanceName);
+        }
+      } catch { /* silencioso */ }
+    }, 3000);
+  };
+
+  // Limpeza de polling ao desmontar o componente.
+  useEffect(() => () => stopPolling(), []);
+
+  // Ao montar: verifica estado real para exibir o card corretamente sem abrir o modal.
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/whatsapp/status?instanceName=${encodeURIComponent(whatsappInstance)}`)
+      .then(r => r.json())
+      .then((d: { success: boolean; state?: string }) => {
+        if (!alive) return;
+        const connected = normalizeConnectionState(d.state) === 'connected';
+        setWhatsappCardConnected(connected);
+        if (import.meta.env.DEV) console.log('[WhatsApp] estado inicial do card:', d.state, '→', connected ? 'conectado' : 'desconectado');
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Ao abrir o modal: restaura o estado real da instância antes de mostrar a UI.
+  // AbortController cancela o fetch se o modal fechar antes da resposta chegar.
+  useEffect(() => {
+    if (!isWhatsAppModalOpen) return;
+
+    const ctrl = new AbortController();
+
+    setWhatsappConnectionStatus('loading');
+
+    fetch(`/api/whatsapp/status?instanceName=${encodeURIComponent(whatsappInstance)}`, {
+      signal: ctrl.signal,
+    })
+      .then(r => r.json())
+      .then((d: { success: boolean; state?: string }) => {
+        const isConnected = normalizeConnectionState(d.state) === 'connected';
+        setWhatsappConnectionStatus(isConnected ? 'connected' : 'idle');
+        setWhatsappCardConnected(isConnected);
+        if (import.meta.env.DEV) console.log('[WhatsApp] estado restaurado ao abrir modal:', d.state, '→', isConnected ? 'connected' : 'idle');
+      })
+      .catch(err => {
+        if (err?.name === 'AbortError') return;
+        setWhatsappConnectionStatus('idle');
+      });
+
+    return () => ctrl.abort();
+  }, [isWhatsAppModalOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const generateWhatsAppQrCode = async () => {
+    stopPolling();
     setWhatsappConnectionStatus('loading');
     setWhatsappQrCode(null);
     setWhatsappError(null);
-    try {
-      // TODO: substituir pela chamada real ao endpoint de conexão WhatsApp
-      // const response = await fetch('/api/whatsapp/qrcode', { method: 'POST' });
-      // const data = await response.json();
-      // setWhatsappQrCode(data.qrCode); // base64 data-uri da imagem QR
-      // setWhatsappConnectionStatus('qr_ready');
 
-      await new Promise(resolve => setTimeout(resolve, 1400));
-      setWhatsappConnectionStatus('error');
-      setWhatsappError('Endpoint de conexão ainda não configurado. Integração em breve.');
+    try {
+      const res = await fetch('/api/whatsapp/connect', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ instanceName: whatsappInstance }),
+      });
+
+      const data = await res.json() as {
+        success:       boolean;
+        qrCode?:       string | null;
+        instanceName?: string;
+        state?:        string;
+        error?:        string;
+        message?:      string;
+      };
+
+      if (!res.ok || !data.success) {
+        setWhatsappConnectionStatus('error');
+        setWhatsappError(data.error ?? data.message ?? 'Erro ao gerar QR Code.');
+        return;
+      }
+
+      const instance = data.instanceName ?? whatsappInstance;
+      setWhatsappInstance(instance);
+
+      // Caso: já conectado (state = open)
+      if (normalizeConnectionState(data.state) === 'connected') {
+        setWhatsappConnectionStatus('connected');
+        setWhatsappCardConnected(true);
+        return;
+      }
+
+      // Caso: QR disponível imediatamente (201)
+      if (data.qrCode) {
+        setWhatsappQrCode(data.qrCode);
+        setWhatsappConnectionStatus('qr_ready');
+        startStatusPolling(instance);
+        return;
+      }
+
+      // Caso: 202 — instância pronta mas QR ainda sendo gerado pelo Baileys
+      startQrPolling(instance);
+
     } catch {
       setWhatsappConnectionStatus('error');
-      setWhatsappError('Erro ao gerar QR Code. Tente novamente.');
+      setWhatsappError('Não foi possível conectar ao servidor. Verifique se o backend está rodando.');
     }
   };
 
@@ -276,7 +427,9 @@ export default function SettingsPremium() {
                 <p className="text-slate-400 text-sm mb-2">
                   Conecte contas de WhatsApp para começar a realizar atendimentos.
                 </p>
-                <span className="text-green-400 text-sm mt-4 block">1 conta conectada</span>
+                <span className={`text-sm mt-4 block ${whatsappCardConnected ? 'text-green-400' : 'text-slate-500'}`}>
+                  {whatsappCardConnected ? '1 conta conectada' : '0 contas conectadas'}
+                </span>
               </div>
               
               {/* WhatsApp Oficial */}
@@ -441,7 +594,21 @@ export default function SettingsPremium() {
                   </div>
                 )}
                 {whatsappConnectionStatus === 'qr_ready' && whatsappQrCode && (
-                  <img src={whatsappQrCode} alt="QR Code WhatsApp" className="w-48 h-48 rounded-lg" />
+                  <div className="text-center space-y-2">
+                    <img src={whatsappQrCode} alt="QR Code WhatsApp" className="w-48 h-48 rounded-lg mx-auto" />
+                    <p className="text-[#567093] text-xs">Escaneie com o WhatsApp do celular</p>
+                  </div>
+                )}
+                {whatsappConnectionStatus === 'connected' && (
+                  <div className="text-center space-y-3">
+                    <div className="w-14 h-14 rounded-full bg-green-500/10 border border-green-500/20 flex items-center justify-center mx-auto">
+                      <svg className="w-7 h-7 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                    <p className="text-green-400 text-sm font-semibold">WhatsApp conectado!</p>
+                    <p className="text-[#475569] text-xs">Instância: {whatsappInstance}</p>
+                  </div>
                 )}
                 {whatsappConnectionStatus === 'error' && (
                   <div className="text-center space-y-2 px-6">
@@ -460,14 +627,17 @@ export default function SettingsPremium() {
               <div className="flex gap-3 pt-1">
                 <button
                   type="button"
-                  onClick={generateWhatsAppQrCode}
+                  onClick={whatsappConnectionStatus === 'connected' ? closeWhatsAppModal : generateWhatsAppQrCode}
                   disabled={whatsappConnectionStatus === 'loading'}
                   className="flex-1 py-3 px-5 rounded-xl text-sm font-semibold text-[#020617]
                     disabled:opacity-50 disabled:cursor-not-allowed
                     transition-all duration-200 hover:brightness-110 active:scale-[0.98]"
                   style={{ background: 'linear-gradient(135deg, #D4AF37 0%, #C49B28 100%)', boxShadow: '0 4px 16px rgba(212,175,55,0.28)' }}
                 >
-                  {whatsappConnectionStatus === 'loading' ? 'Gerando...' : 'Gerar QR Code'}
+                  {whatsappConnectionStatus === 'loading'   && 'Gerando...'}
+                  {whatsappConnectionStatus === 'connected' && 'Fechar'}
+                  {whatsappConnectionStatus === 'qr_ready'  && 'Aguardando leitura...'}
+                  {(whatsappConnectionStatus === 'idle' || whatsappConnectionStatus === 'error') && 'Gerar QR Code'}
                 </button>
                 <button
                   type="button"

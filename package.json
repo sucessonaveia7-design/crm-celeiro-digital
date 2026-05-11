@@ -9,7 +9,10 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "check": "tsc --noEmit",
+    "start": "npx tsx api/server.ts",
     "server:dev": "nodemon",
+    "server:kill": "npx kill-port 4000",
+    "server:restart": "npm run server:kill && npm run server:dev",
     "dev": "concurrently \"npm run client:dev\" \"npm run server:dev\""
   },
   "dependencies": {

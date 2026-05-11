@@ -16,6 +16,8 @@ import listsRoutes from './routes/lists.ts'
 import broadcastsRoutes from './routes/broadcasts.ts'
 import setupRoutes from './routes/setup.ts'
 import conversationsRoutes from './routes/conversations.ts';
+import whatsappRoutes      from './routes/whatsapp.ts';
+import webhooksRoutes      from './routes/webhooks.ts';
 
 // for esm mode
 const __filename = fileURLToPath(import.meta.url)
@@ -36,6 +38,8 @@ app.use('/api/lists', listsRoutes)
 app.use('/api/broadcasts', broadcastsRoutes)
 app.use('/api/setup', setupRoutes)
 app.use('/api/conversations', conversationsRoutes);
+app.use('/api/whatsapp',     whatsappRoutes);
+app.use('/api/webhooks',     webhooksRoutes);
 
 /**
  * health
