@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase.ts';
+import { supabaseAdmin as supabase } from '../lib/supabase.ts';
 
 const CHURCH_ID = 'f6266811-ac76-43db-bb18-ffd1cda0a6f7';
 
