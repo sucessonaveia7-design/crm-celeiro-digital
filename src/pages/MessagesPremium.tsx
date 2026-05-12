@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 
-const API_URL = "http://localhost:4000";
+const API_URL = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
 
 /* ─────────────────────────────── TYPES ─────────────────────────────── */
 interface Conversa {
@@ -21,8 +21,8 @@ interface Conversa {
 interface MessageAPI {
   id: string;
   conversation_id: string;
-  sender_type: "user" | "contact" | "system" | "bot";
-  sender_id: string | null;
+  sender_type: "agent" | "user" | "contact" | "system" | "bot";
+  sender_id?: string | null;
   message_type: string;
   content: string | null;
   media_url?: string | null;
@@ -260,49 +260,40 @@ export default function Chat() {
   }, [sel])
 
   async function loadConversations() {
-    const { data, error } = await supabase
-      .from('conversations')
-      .select(`
-        id,
-        status,
-        unread_count,
-        last_message,
-        last_message_at,
-        department,
-        contacts(name, phone),
-        channels(name, type)
-      `)
-      .order('last_message_at', { ascending: false })
+    try {
+      const url = `${API_URL}/api/whatsapp/conversations`
+      console.log('[MessagesPremium] GET conversations', url)
+      const res  = await fetch(url)
+      const json = await res.json()
+      console.log('[MessagesPremium] response', json)
+      if (!json.success) return
 
-    if (error) {
-      console.error('Erro ao carregar conversas:', error)
-      return
+      const mapped = (json.data ?? []).map((c: any) => {
+        const contact  = Array.isArray(c.contacts) ? c.contacts[0] : c.contacts
+        const nome     = contact?.name ?? 'Contato'
+        const iniciais = nome.split(' ').map((p: string) => p[0]).join('').substring(0, 2).toUpperCase()
+        const horario  = c.last_message_at
+          ? new Date(c.last_message_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+          : ''
+        return {
+          id:             c.id,
+          nome,
+          ultimaMensagem: c.last_message ?? '',
+          horario,
+          naoLidas:       c.unread_count ?? 0,
+          status:         (c.status ?? 'aguardando') as Conversa['status'],
+          iniciais,
+          cor:            '#D4AF37',
+          departamento:   '',
+          canal:          'WhatsApp',
+          online:         false,
+        }
+      })
+
+      setConversations(mapped)
+    } catch (err) {
+      console.error('[MessagesPremium] Erro ao carregar conversas:', err)
     }
-
-    const mapped = data.map((c) => {
-      const contact = Array.isArray(c.contacts) ? c.contacts[0] : c.contacts
-      const channel = Array.isArray(c.channels) ? c.channels[0] : c.channels
-      const nome = (contact as any)?.name ?? 'Contato'
-      const iniciais = nome.split(' ').map((p: string) => p[0]).join('').substring(0, 2).toUpperCase()
-      const horario = c.last_message_at
-        ? new Date(c.last_message_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-        : ''
-      return {
-        id:           c.id,
-        nome,
-        ultimaMensagem: c.last_message ?? '',
-        horario,
-        naoLidas:     c.unread_count ?? 0,
-        status:       c.status,
-        iniciais,
-        cor:          '#D4AF37',
-        departamento: c.department ?? '',
-        canal:        (channel as any)?.type ?? 'Chat',
-        online:       false,
-      }
-    })
-
-    setConversations(mapped)
   }
 
   async function loadMessages(conversationId: string) {
@@ -310,18 +301,13 @@ export default function Chat() {
       setMessagesLoading(true)
       setMessagesError(null)
 
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('conversation_id', conversationId)
-        .order('created_at', { ascending: true })
+      const url  = `${API_URL}/api/whatsapp/messages/${conversationId}`
+      console.log('[MessagesPremium] GET messages', url)
+      const res  = await fetch(url)
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? 'Erro ao buscar mensagens')
 
-      if (error) {
-        console.error('Erro ao carregar mensagens:', error)
-        throw error
-      }
-
-      setMessages(data ?? [])
+      setMessages(json.data ?? [])
 
       setTimeout(() => {
         const el = document.getElementById('chat-scroll')
@@ -846,7 +832,7 @@ export default function Chat() {
 
                     <div id="chat-scroll" className="space-y-4">
                       {messages.map((msg) => {
-                        const isUser = msg.sender_type === "user";
+                        const isUser = msg.sender_type === "agent" || msg.sender_type === "user";
 
                         return (
                           <div
