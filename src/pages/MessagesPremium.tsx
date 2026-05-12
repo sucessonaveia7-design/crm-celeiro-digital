@@ -362,6 +362,37 @@ export default function Chat() {
     }
   }
 
+  async function openConversation(conv: Conversa) {
+    setSel(conv.id)
+    loadMessages(conv.id)
+
+    // Atualização otimista: zera badge e promove aguardando → atendendo imediatamente
+    setConversations(prev => prev.map(c => {
+      if (c.id !== conv.id) return c
+      return {
+        ...c,
+        naoLidas: 0,
+        status: c.status === 'aguardando' ? 'atendendo' : c.status,
+      }
+    }))
+
+    try {
+      console.log('[MessagesPremium] POST read', conv.id)
+      await fetch(`${API_URL}/api/whatsapp/conversations/${conv.id}/read`, { method: 'POST' })
+
+      if (conv.status === 'aguardando') {
+        console.log('[MessagesPremium] PATCH status → atendendo', conv.id)
+        await fetch(`${API_URL}/api/whatsapp/conversations/${conv.id}/status`, {
+          method:  'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ status: 'atendendo' }),
+        })
+      }
+    } catch (err) {
+      console.error('[MessagesPremium] openConversation error:', err)
+    }
+  }
+
     const cont = {
       atendendo:  conversations.filter(c => c.status === 'atendendo').length,
       aguardando: conversations.filter(c => c.status === 'aguardando').length,
@@ -633,10 +664,7 @@ export default function Chat() {
                  return (
                    <button
                      key={conv.id}
-                     onClick={() => {
-                       setSel(conv.id);
-                       loadMessages(conv.id);
-                     }}
+                     onClick={() => openConversation(conv)}
                      className={`relative w-full flex items-start gap-3.5 px-4 py-4
                                  text-left border-b border-white/[0.04]
                                  transition-all duration-150 group
