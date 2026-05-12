@@ -282,7 +282,7 @@ export default function Chat() {
 
       const mapped = (json.data ?? []).map((c: any) => {
         const contact  = Array.isArray(c.contacts) ? c.contacts[0] : c.contacts
-        const nome     = contact?.name ?? 'Contato'
+        const nome     = contact?.name || contact?.phone || 'Contato'
         const iniciais = nome.split(' ').map((p: string) => p[0]).join('').substring(0, 2).toUpperCase()
         const horario  = c.last_message_at
           ? new Date(c.last_message_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
