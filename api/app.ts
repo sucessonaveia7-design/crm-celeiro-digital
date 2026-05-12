@@ -67,13 +67,17 @@ app.use((error: Error, req: Request, res: Response, next: NextFunction) => {
 })
 
 /**
- * 404 handler
+ * Static frontend (React/Vite dist) — apenas em produção.
+ * Em dev, o Vite roda em processo separado na porta 5173.
+ * O dist/ é gerado pelo buildCommand do Railway: "npm install && npm run build"
  */
-app.use((req: Request, res: Response) => {
-  res.status(404).json({
-    success: false,
-    error: 'API not found',
-  })
+const distPath = path.join(__dirname, '..', 'dist')
+
+app.use(express.static(distPath))
+
+// SPA fallback: todas as rotas não-API servem o index.html do React
+app.get('*', (req: Request, res: Response) => {
+  res.sendFile(path.join(distPath, 'index.html'))
 })
 
 export default app
