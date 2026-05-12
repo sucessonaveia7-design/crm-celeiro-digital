@@ -199,7 +199,12 @@ export default function Chat() {
     return () => document.removeEventListener('mousedown', fn)
   }, [])
 
-  useEffect(() => { loadConversations() }, [])
+  // Polling de conversas a cada 3s
+  useEffect(() => {
+    loadConversations()
+    const iv = setInterval(loadConversations, 3000)
+    return () => clearInterval(iv)
+  }, [])
 
   useEffect(() => {
     if (conversations.length > 0 && !sel) {
@@ -259,6 +264,13 @@ export default function Chat() {
     return () => { supabase.removeChannel(channel) }
   }, [sel])
 
+  // Polling de mensagens a cada 3s para a conversa ativa
+  useEffect(() => {
+    if (!sel) return
+    const iv = setInterval(() => loadMessages(sel, true), 3000)
+    return () => clearInterval(iv)
+  }, [sel])
+
   async function loadConversations() {
     try {
       const url = `${API_URL}/api/whatsapp/conversations`
@@ -296,27 +308,29 @@ export default function Chat() {
     }
   }
 
-  async function loadMessages(conversationId: string) {
+  async function loadMessages(conversationId: string, silent = false) {
     try {
-      setMessagesLoading(true)
-      setMessagesError(null)
+      if (!silent) { setMessagesLoading(true); setMessagesError(null) }
 
       const url  = `${API_URL}/api/whatsapp/messages/${conversationId}`
-      console.log('[MessagesPremium] GET messages', url)
+      if (!silent) console.log('[MessagesPremium] GET messages', url)
       const res  = await fetch(url)
       const json = await res.json()
       if (!json.success) throw new Error(json.error ?? 'Erro ao buscar mensagens')
 
-      setMessages(json.data ?? [])
-
-      setTimeout(() => {
-        const el = document.getElementById('chat-scroll')
-        if (el) el.scrollTop = el.scrollHeight
-      }, 100)
+      setMessages(prev => {
+        const incoming: MessageAPI[] = json.data ?? []
+        if (prev.length === incoming.length && prev[prev.length - 1]?.id === incoming[incoming.length - 1]?.id) return prev
+        setTimeout(() => {
+          const el = document.getElementById('chat-scroll')
+          if (el) el.scrollTop = el.scrollHeight
+        }, 50)
+        return incoming
+      })
     } catch (err: any) {
-      setMessagesError(err.message || 'Erro ao buscar mensagens')
+      if (!silent) setMessagesError(err.message || 'Erro ao buscar mensagens')
     } finally {
-      setMessagesLoading(false)
+      if (!silent) setMessagesLoading(false)
     }
   }
 
@@ -328,18 +342,19 @@ export default function Chat() {
     setMessageText('')
 
     try {
-      const res = await fetch(`${API_URL}/api/conversations/${sel}/messages`, {
+      const res = await fetch(`${API_URL}/api/whatsapp/conversations/${sel}/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: text, message_type: 'text' }),
+        body: JSON.stringify({ content: text }),
       })
 
-      if (!res.ok) throw new Error('Erro ao enviar mensagem')
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? 'Erro ao enviar mensagem')
 
       await loadMessages(sel)
       await loadConversations()
-    } catch (err) {
-      console.error('Erro ao enviar:', err)
+    } catch (err: any) {
+      console.error('[MessagesPremium] Erro ao enviar:', err)
       setMessageText(text)
     } finally {
       setSending(false)

@@ -377,6 +377,80 @@ router.get('/messages/:conversationId', async (req: Request, res: Response) => {
   }
 });
 
+// ── POST /api/whatsapp/conversations/:conversationId/send ─────────────────────
+// Envia mensagem de texto para o número da conversa via Evolution API.
+// Body: { content: string }
+router.post('/conversations/:conversationId/send', async (req: Request, res: Response) => {
+  if (!isConfigured()) return replyNotConfigured(res);
+
+  const { conversationId } = req.params;
+  const content = (req.body?.content as string | undefined)?.trim();
+
+  if (!content) return res.status(400).json({ success: false, error: 'content obrigatório' });
+
+  try {
+    // 1. Buscar conversa → whatsapp_jid e instance_name
+    const { data: conv, error: convErr } = await supabase
+      .from('conversations')
+      .select('id, whatsapp_jid, instance_name')
+      .eq('id', conversationId)
+      .maybeSingle();
+
+    if (convErr || !conv) {
+      return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
+    }
+    if (!conv.whatsapp_jid) {
+      return res.status(400).json({ success: false, error: 'Conversa sem whatsapp_jid' });
+    }
+
+    const instanceName = (conv.instance_name as string | undefined) || DEFAULT_INSTANCE;
+    const phone = (conv.whatsapp_jid as string).split('@')[0];
+
+    console.log(`[whatsapp/send] conv=${conversationId} phone=${phone} via ${instanceName}`);
+
+    // 2. Enviar via Evolution API
+    const evoResult = await evoFetch(`/message/sendText/${encodeURIComponent(instanceName)}`, {
+      method: 'POST',
+      body: JSON.stringify({ number: phone, text: content }),
+    });
+
+    if (!evoResult.ok) {
+      const errMsg = extractError(evoResult.data, 'Falha ao enviar mensagem via WhatsApp.');
+      console.error('[whatsapp/send] Evolution API error:', errMsg);
+      return res.status(502).json({ success: false, error: errMsg });
+    }
+
+    const evoData = evoResult.data as any;
+    const evolutionMsgId: string | null = evoData?.key?.id ?? evoData?.id ?? null;
+
+    console.log(`[whatsapp/send] enviada — evolutionMsgId=${evolutionMsgId}`);
+
+    // 3. Persistir mensagem outbound (ignora duplicata por race condition)
+    const { error: msgErr } = await supabase.from('messages').insert({
+      conversation_id:      conversationId,
+      sender_type:          'agent',
+      message_type:         'text',
+      content,
+      metadata:             evoData,
+      evolution_message_id: evolutionMsgId,
+    });
+    if (msgErr && msgErr.code !== '23505') {
+      console.error('[whatsapp/send] erro ao persistir:', msgErr.message);
+    }
+
+    // 4. Atualizar preview da conversa
+    await supabase
+      .from('conversations')
+      .update({ last_message: content, last_message_at: new Date().toISOString() })
+      .eq('id', conversationId);
+
+    return res.json({ success: true, evolutionMsgId });
+  } catch (err: any) {
+    console.error('[whatsapp/send] erro inesperado:', err?.message ?? err);
+    return res.status(500).json({ success: false, error: err?.message ?? 'Erro interno' });
+  }
+});
+
 // ── POST /api/whatsapp/webhook ────────────────────────────────────────────────
 // Recebe eventos push da Evolution API.
 // Configurar no Railway: https://seu-backend.com/api/whatsapp/webhook
