@@ -10,7 +10,7 @@ router.get('/', ...withTenant(), async (req, res) => {
     const { data, error } = await supabase
       .from('conversations')
       .select('*')
-      .eq('church_id', req.organizationId!)
+      .eq('organization_id', req.organizationId!)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(50);
 
@@ -52,9 +52,9 @@ router.post('/:id/messages', ...withTenant(), async (req, res) => {
     // Verifica que a conversa pertence à organização do usuário
     const { data: conv, error: convError } = await supabase
       .from('conversations')
-      .select('id, church_id')
+      .select('id, organization_id')
       .eq('id', id)
-      .eq('church_id', req.organizationId!)
+      .eq('organization_id', req.organizationId!)
       .single();
 
     if (convError || !conv) {

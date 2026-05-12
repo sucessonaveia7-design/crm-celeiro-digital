@@ -37,7 +37,7 @@ async function upsertContact(
     .from('contacts')
     .select('id')
     .eq('phone', phone)
-    .eq('church_id', orgId)
+    .eq('organization_id', orgId)
     .maybeSingle();
 
   if (findErr) { logSupabaseError('contact:find', findErr); return null; }
@@ -47,13 +47,13 @@ async function upsertContact(
 
   const { data: created, error: insertErr } = await supabase
     .from('contacts')
-    .insert({ name: displayName || phone, phone, church_id: orgId })
+    .insert({ name: displayName || phone, phone, organization_id: orgId })
     .select('id')
     .single();
 
   if (insertErr) {
     if (insertErr.code === '42703') {
-      console.warn('[persist][contact] coluna church_id ausente — tentando sem ela');
+      console.warn('[persist][contact] coluna organization_id ausente — tentando sem ela');
       const { data: c2, error: e2 } = await supabase
         .from('contacts')
         .insert({ name: displayName || phone, phone })
@@ -112,7 +112,7 @@ async function upsertConversation(
   console.log(`[persist][conversation] não encontrada — inserindo`);
 
   const payload: Record<string, unknown> = {
-    church_id:     orgId,
+    organization_id:     orgId,
     contact_id:    contactId,
     whatsapp_jid:  whatsappJid,
     instance_name: instanceName,

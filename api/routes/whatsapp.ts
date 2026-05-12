@@ -331,7 +331,7 @@ router.patch('/conversations/:id/resolve', ...withTenant(), async (req: Request,
       .from('conversations')
       .update({ status: 'resolvido', unread_count: 0 })
       .eq('id', id)
-      .eq('church_id', req.organizationId!);
+      .eq('organization_id', req.organizationId!);
 
     if (error) {
       console.error('[whatsapp][resolve] Supabase error:', error.message);
@@ -357,7 +357,7 @@ router.patch('/conversations/:id/status', ...withTenant(), async (req: Request, 
       .from('conversations')
       .update({ status })
       .eq('id', id)
-      .eq('church_id', req.organizationId!);
+      .eq('organization_id', req.organizationId!);
 
     if (error) {
       console.error('[whatsapp][status] Supabase error:', error.message);
@@ -378,7 +378,7 @@ router.post('/conversations/:id/read', ...withTenant(), async (req: Request, res
       .from('conversations')
       .update({ unread_count: 0 })
       .eq('id', id)
-      .eq('church_id', req.organizationId!);
+      .eq('organization_id', req.organizationId!);
 
     if (error) {
       console.error('[whatsapp][read] Supabase error:', error.message);
@@ -406,7 +406,7 @@ router.get('/conversations', ...withTenant(), async (req: Request, res: Response
         whatsapp_jid,
         contacts ( id, name, phone )
       `)
-      .eq('church_id', req.organizationId!)
+      .eq('organization_id', req.organizationId!)
       .not('whatsapp_jid', 'is', null)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(50);
@@ -434,7 +434,7 @@ router.get('/messages/:conversationId', ...withTenant(), async (req: Request, re
       .from('conversations')
       .select('id')
       .eq('id', conversationId)
-      .eq('church_id', req.organizationId!)
+      .eq('organization_id', req.organizationId!)
       .maybeSingle();
 
     if (!conv) return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
@@ -474,7 +474,7 @@ router.post('/conversations/:conversationId/send', ...withTenant(), async (req: 
       .from('conversations')
       .select('id, whatsapp_jid, instance_name')
       .eq('id', conversationId)
-      .eq('church_id', req.organizationId!)
+      .eq('organization_id', req.organizationId!)
       .maybeSingle();
 
     if (convErr || !conv) {
@@ -559,7 +559,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
 
         const { data: conv } = await supabase
           .from('conversations')
-          .select('id, church_id')
+          .select('id, organization_id')
           .eq('whatsapp_jid', remoteJid)
           .eq('instance_name', event.instance)
           .maybeSingle();
@@ -568,7 +568,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
 
         await supabase.from('messages').insert({
           conversation_id: conv.id,
-          church_id:       conv.church_id,
+          organization_id:       conv.organization_id,
           sender_type:     'contact',
           message_type:    'text',
           content,
