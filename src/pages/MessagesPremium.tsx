@@ -788,19 +788,18 @@ export default function Chat() {
                      onClick={async () => {
                        if (!ativa) return;
                        try {
-                         await supabase
-                           .from("conversations")
-                           .update({
-                             status: "resolvido",
-                             unread_count: 0
-                           })
-                           .eq("id", ativa.id);
-                         
+                         console.log('[MessagesPremium] PATCH resolve', ativa.id);
+                         const res = await fetch(
+                           `${API_URL}/api/whatsapp/conversations/${ativa.id}/resolve`,
+                           { method: 'PATCH' }
+                         );
+                         const json = await res.json();
+                         if (!json.success) throw new Error(json.error ?? 'Erro ao resolver');
                          await loadConversations();
                          setSel(null);
                        } catch (error) {
-                         console.error("Erro ao concluir conversa:", error);
-                         alert("Erro ao concluir conversa. Tente novamente.");
+                         console.error('[MessagesPremium] Erro ao concluir conversa:', error);
+                         alert('Erro ao concluir conversa. Tente novamente.');
                        }
                      }}>
                      <Check className="w-[13px] h-[13px]" strokeWidth={2.5} />

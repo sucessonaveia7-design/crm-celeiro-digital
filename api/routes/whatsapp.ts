@@ -322,6 +322,71 @@ router.delete('/instance', async (req: Request, res: Response) => {
   }
 });
 
+// ── PATCH /api/whatsapp/conversations/:id/resolve ────────────────────────────
+router.patch('/conversations/:id/resolve', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const { error } = await supabase
+      .from('conversations')
+      .update({ status: 'resolvido', unread_count: 0 })
+      .eq('id', id);
+
+    if (error) {
+      console.error('[whatsapp][resolve] Supabase error:', error.message);
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    console.log(`[whatsapp][resolve] conversa resolvida id=${id}`);
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message ?? 'Erro interno' });
+  }
+});
+
+// ── PATCH /api/whatsapp/conversations/:id/status ──────────────────────────────
+// Body: { status: 'atendendo' | 'aguardando' | 'resolvido' }
+router.patch('/conversations/:id/status', async (req: Request, res: Response) => {
+  const { id }   = req.params;
+  const status   = (req.body?.status as string | undefined)?.trim();
+
+  if (!status) return res.status(400).json({ success: false, error: 'status obrigatório' });
+
+  try {
+    const { error } = await supabase
+      .from('conversations')
+      .update({ status })
+      .eq('id', id);
+
+    if (error) {
+      console.error('[whatsapp][status] Supabase error:', error.message);
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    console.log(`[whatsapp][status] conversa ${id} → ${status}`);
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message ?? 'Erro interno' });
+  }
+});
+
+// ── POST /api/whatsapp/conversations/:id/read ─────────────────────────────────
+router.post('/conversations/:id/read', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const { error } = await supabase
+      .from('conversations')
+      .update({ unread_count: 0 })
+      .eq('id', id);
+
+    if (error) {
+      console.error('[whatsapp][read] Supabase error:', error.message);
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    console.log(`[whatsapp][read] unread_count zerado id=${id}`);
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message ?? 'Erro interno' });
+  }
+});
+
 // ── GET /api/whatsapp/conversations ──────────────────────────────────────────
 // Lista conversas WhatsApp ordenadas por atividade recente.
 router.get('/conversations', async (_req: Request, res: Response) => {
