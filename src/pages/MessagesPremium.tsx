@@ -11,6 +11,25 @@ import { supabase } from '@/lib/supabase'
 
 const API_URL = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
 
+// Retorna o access_token da sessão atual para enviar no header Authorization.
+async function getToken(): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession()
+  return session?.access_token ?? ''
+}
+
+// fetch autenticado: injeta Bearer token em todas as requisições ao backend.
+async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const token = await getToken()
+  return fetch(url, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init.headers ?? {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  })
+}
+
 /* ─────────────────────────────── TYPES ─────────────────────────────── */
 interface Conversa {
   id: string; nome: string; ultimaMensagem: string; horario: string
@@ -275,7 +294,7 @@ export default function Chat() {
     try {
       const url = `${API_URL}/api/whatsapp/conversations`
       console.log('[MessagesPremium] GET conversations', url)
-      const res  = await fetch(url)
+      const res  = await apiFetch(url)
       const json = await res.json()
       console.log('[MessagesPremium] response', json)
       if (!json.success) return
@@ -314,7 +333,7 @@ export default function Chat() {
 
       const url  = `${API_URL}/api/whatsapp/messages/${conversationId}`
       if (!silent) console.log('[MessagesPremium] GET messages', url)
-      const res  = await fetch(url)
+      const res  = await apiFetch(url)
       const json = await res.json()
       if (!json.success) throw new Error(json.error ?? 'Erro ao buscar mensagens')
 
@@ -342,9 +361,8 @@ export default function Chat() {
     setMessageText('')
 
     try {
-      const res = await fetch(`${API_URL}/api/whatsapp/conversations/${sel}/send`, {
+      const res = await apiFetch(`${API_URL}/api/whatsapp/conversations/${sel}/send`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: text }),
       })
 
@@ -378,14 +396,13 @@ export default function Chat() {
 
     try {
       console.log('[MessagesPremium] POST read', conv.id)
-      await fetch(`${API_URL}/api/whatsapp/conversations/${conv.id}/read`, { method: 'POST' })
+      await apiFetch(`${API_URL}/api/whatsapp/conversations/${conv.id}/read`, { method: 'POST' })
 
       if (conv.status === 'aguardando') {
         console.log('[MessagesPremium] PATCH status → atendendo', conv.id)
-        await fetch(`${API_URL}/api/whatsapp/conversations/${conv.id}/status`, {
-          method:  'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ status: 'atendendo' }),
+        await apiFetch(`${API_URL}/api/whatsapp/conversations/${conv.id}/status`, {
+          method: 'PATCH',
+          body:   JSON.stringify({ status: 'atendendo' }),
         })
       }
     } catch (err) {
@@ -817,7 +834,7 @@ export default function Chat() {
                        if (!ativa) return;
                        try {
                          console.log('[MessagesPremium] PATCH resolve', ativa.id);
-                         const res = await fetch(
+                         const res = await apiFetch(
                            `${API_URL}/api/whatsapp/conversations/${ativa.id}/resolve`,
                            { method: 'PATCH' }
                          );

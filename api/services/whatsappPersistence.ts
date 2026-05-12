@@ -1,11 +1,9 @@
 import { supabaseAdmin } from '../lib/supabase.ts';
+import { resolveOrgFromInstance } from '../middleware/tenant.ts';
 
-// Alias local — todas as queries deste módulo usam supabaseAdmin (service_role).
 const supabase = supabaseAdmin;
 
 console.log('[persist] módulo carregado — usando supabaseAdmin (service_role)');
-
-const CHURCH_ID = 'f6266811-ac76-43db-bb18-ffd1cda0a6f7';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -17,7 +15,6 @@ function isGroupJid(jid: string): boolean {
   return jid.endsWith('@g.us');
 }
 
-// Loga o erro do Supabase completo — nunca imprime chaves secretas.
 function logSupabaseError(label: string, error: any): void {
   console.error(`[persist][${label}] Supabase error:`, {
     code:    error?.code,
@@ -32,13 +29,15 @@ function logSupabaseError(label: string, error: any): void {
 async function upsertContact(
   phone:       string,
   displayName: string,
+  orgId:       string,
 ): Promise<string | null> {
-  console.log(`[persist][contact] buscando phone="${phone}"`);
+  console.log(`[persist][contact] buscando phone="${phone}" org="${orgId}"`);
 
   const { data: found, error: findErr } = await supabase
     .from('contacts')
     .select('id')
     .eq('phone', phone)
+    .eq('church_id', orgId)
     .maybeSingle();
 
   if (findErr) { logSupabaseError('contact:find', findErr); return null; }
@@ -48,12 +47,11 @@ async function upsertContact(
 
   const { data: created, error: insertErr } = await supabase
     .from('contacts')
-    .insert({ name: displayName || phone, phone, church_id: CHURCH_ID })
+    .insert({ name: displayName || phone, phone, church_id: orgId })
     .select('id')
     .single();
 
   if (insertErr) {
-    // church_id pode não existir na tabela — tentar sem ele
     if (insertErr.code === '42703') {
       console.warn('[persist][contact] coluna church_id ausente — tentando sem ela');
       const { data: c2, error: e2 } = await supabase
@@ -65,7 +63,6 @@ async function upsertContact(
       console.log(`[persist][contact] criado id=${c2.id}`);
       return c2.id;
     }
-    // Race condition
     if (insertErr.code === '23505') {
       const { data: retry } = await supabase
         .from('contacts').select('id').eq('phone', phone).maybeSingle();
@@ -85,8 +82,9 @@ async function upsertConversation(
   whatsappJid:  string,
   contactId:    string,
   instanceName: string,
+  orgId:        string,
 ): Promise<string | null> {
-  console.log(`[persist][conversation] buscando jid="${whatsappJid}"`);
+  console.log(`[persist][conversation] buscando jid="${whatsappJid}" org="${orgId}"`);
 
   const { data: found, error: findErr } = await supabase
     .from('conversations')
@@ -95,11 +93,10 @@ async function upsertConversation(
     .maybeSingle();
 
   if (findErr) {
-    // whatsapp_jid ainda não existe — migration não foi rodada
     if (findErr.code === '42703') {
       console.error(
-        '[persist][conversation] COLUNA whatsapp_jid NÃO EXISTE em conversations. ' +
-        'Execute a migration 20260511_whatsapp_persistence.sql no Supabase SQL Editor.'
+        '[persist][conversation] COLUNA whatsapp_jid NÃO EXISTE. ' +
+        'Execute a migration 20260511_whatsapp_persistence.sql.'
       );
       return null;
     }
@@ -115,7 +112,7 @@ async function upsertConversation(
   console.log(`[persist][conversation] não encontrada — inserindo`);
 
   const payload: Record<string, unknown> = {
-    church_id:     CHURCH_ID,
+    church_id:     orgId,
     contact_id:    contactId,
     whatsapp_jid:  whatsappJid,
     instance_name: instanceName,
@@ -130,7 +127,6 @@ async function upsertConversation(
     .single();
 
   if (insertErr) {
-    // instance_name pode não existir — tentar sem ela
     if (insertErr.code === '42703' && String(insertErr.message).includes('instance_name')) {
       console.warn('[persist][conversation] coluna instance_name ausente — tentando sem ela');
       const { instance_name: _drop, ...payloadWithout } = payload;
@@ -166,10 +162,6 @@ async function insertMessage(opts: {
   evolutionMsgId:  string;
   rawData:         Record<string, any>;
 }): Promise<boolean> {
-  // Schema real de public.messages:
-  // id, conversation_id, sender_type, sender_id, message_type,
-  // content, media_url, metadata, evolution_message_id, created_at
-  // Colunas NÃO existentes: church_id → nunca incluir.
   const payload: Record<string, unknown> = {
     conversation_id:      opts.conversationId,
     sender_type:          opts.fromMe ? 'agent' : 'contact',
@@ -184,7 +176,6 @@ async function insertMessage(opts: {
     sender_type:          payload.sender_type,
     message_type:         payload.message_type,
     content_preview:      String(payload.content ?? '').slice(0, 80),
-    has_metadata:         !!payload.metadata,
     evolution_message_id: payload.evolution_message_id,
   });
 
@@ -239,18 +230,17 @@ async function updateConversationPreview(
 // ── entry point ───────────────────────────────────────────────────────────────
 
 export async function persistIncomingMessage(
-  instance: string,
-  data:     Record<string, any>,
-  content:  string,
-  msgType:  string,
+  instance:  string,
+  data:      Record<string, any>,
+  content:   string,
+  msgType:   string,
+  orgId?:    string,  // resolvido pelo webhook controller; fallback via resolveOrgFromInstance
 ): Promise<void> {
-  // Confirma client usado — aparece em cada webhook recebido.
   console.log('[persist] usando supabaseAdmin (service_role)');
-
-  // Log de entrada — confirma que a função foi chamada.
   console.log('[persist] ── persistIncomingMessage iniciado ──', {
     instance,
     msgType,
+    orgId:          orgId ?? '(pendente resolução)',
     contentPreview: content.slice(0, 80) || '(vazio)',
     dataKeys:       Object.keys(data),
   });
@@ -260,8 +250,6 @@ export async function persistIncomingMessage(
   const fromMe    = (key?.fromMe   as boolean | undefined) ?? false;
   const messageId = key?.id        as string | undefined;
   const pushName  = data?.pushName as string | undefined;
-
-  console.log('[persist] payload extraído:', { remoteJid, fromMe, messageId, pushName });
 
   if (!remoteJid || !messageId) {
     console.warn('[persist] remoteJid ou messageId ausente — abortando. data.key =', key);
@@ -273,16 +261,23 @@ export async function persistIncomingMessage(
     return;
   }
 
-  const phone = phoneFromJid(remoteJid);
-  console.log(`[persist] phone normalizado: "${phone}"`);
+  // Resolve organização: usa o valor passado pelo controller ou faz lookup pelo instance
+  const resolvedOrgId = orgId ?? await resolveOrgFromInstance(instance);
+  if (!resolvedOrgId) {
+    console.error(`[persist] Não foi possível resolver org para instance="${instance}" — abortando`);
+    return;
+  }
 
-  const contactId = await upsertContact(phone, pushName ?? phone);
+  const phone = phoneFromJid(remoteJid);
+  console.log(`[persist] phone="${phone}" org="${resolvedOrgId}"`);
+
+  const contactId = await upsertContact(phone, pushName ?? phone, resolvedOrgId);
   if (!contactId) {
     console.error('[persist] upsertContact falhou — abortando');
     return;
   }
 
-  const conversationId = await upsertConversation(remoteJid, contactId, instance);
+  const conversationId = await upsertConversation(remoteJid, contactId, instance, resolvedOrgId);
   if (!conversationId) {
     console.error('[persist] upsertConversation falhou — abortando');
     return;
@@ -299,6 +294,6 @@ export async function persistIncomingMessage(
 
   if (inserted) {
     await updateConversationPreview(conversationId, content, fromMe);
-    console.log(`[persist] ✓ concluído — conversa=${conversationId} phone=${phone}`);
+    console.log(`[persist] ✓ concluído — conversa=${conversationId} phone=${phone} org=${resolvedOrgId}`);
   }
 }

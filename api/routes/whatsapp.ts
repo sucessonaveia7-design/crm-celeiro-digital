@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { supabase } from '../lib/supabase.ts';
+import { withTenant } from '../middleware/tenant.ts';
 
 const router = Router();
 
@@ -323,13 +324,14 @@ router.delete('/instance', async (req: Request, res: Response) => {
 });
 
 // ── PATCH /api/whatsapp/conversations/:id/resolve ────────────────────────────
-router.patch('/conversations/:id/resolve', async (req: Request, res: Response) => {
+router.patch('/conversations/:id/resolve', ...withTenant(), async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
     const { error } = await supabase
       .from('conversations')
       .update({ status: 'resolvido', unread_count: 0 })
-      .eq('id', id);
+      .eq('id', id)
+      .eq('church_id', req.organizationId!);
 
     if (error) {
       console.error('[whatsapp][resolve] Supabase error:', error.message);
@@ -344,7 +346,7 @@ router.patch('/conversations/:id/resolve', async (req: Request, res: Response) =
 
 // ── PATCH /api/whatsapp/conversations/:id/status ──────────────────────────────
 // Body: { status: 'atendendo' | 'aguardando' | 'resolvido' }
-router.patch('/conversations/:id/status', async (req: Request, res: Response) => {
+router.patch('/conversations/:id/status', ...withTenant(), async (req: Request, res: Response) => {
   const { id }   = req.params;
   const status   = (req.body?.status as string | undefined)?.trim();
 
@@ -354,7 +356,8 @@ router.patch('/conversations/:id/status', async (req: Request, res: Response) =>
     const { error } = await supabase
       .from('conversations')
       .update({ status })
-      .eq('id', id);
+      .eq('id', id)
+      .eq('church_id', req.organizationId!);
 
     if (error) {
       console.error('[whatsapp][status] Supabase error:', error.message);
@@ -368,13 +371,14 @@ router.patch('/conversations/:id/status', async (req: Request, res: Response) =>
 });
 
 // ── POST /api/whatsapp/conversations/:id/read ─────────────────────────────────
-router.post('/conversations/:id/read', async (req: Request, res: Response) => {
+router.post('/conversations/:id/read', ...withTenant(), async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
     const { error } = await supabase
       .from('conversations')
       .update({ unread_count: 0 })
-      .eq('id', id);
+      .eq('id', id)
+      .eq('church_id', req.organizationId!);
 
     if (error) {
       console.error('[whatsapp][read] Supabase error:', error.message);
@@ -389,7 +393,7 @@ router.post('/conversations/:id/read', async (req: Request, res: Response) => {
 
 // ── GET /api/whatsapp/conversations ──────────────────────────────────────────
 // Lista conversas WhatsApp ordenadas por atividade recente.
-router.get('/conversations', async (_req: Request, res: Response) => {
+router.get('/conversations', ...withTenant(), async (req: Request, res: Response) => {
   try {
     const { data, error } = await supabase
       .from('conversations')
@@ -402,6 +406,7 @@ router.get('/conversations', async (_req: Request, res: Response) => {
         whatsapp_jid,
         contacts ( id, name, phone )
       `)
+      .eq('church_id', req.organizationId!)
       .not('whatsapp_jid', 'is', null)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(50);
@@ -419,11 +424,21 @@ router.get('/conversations', async (_req: Request, res: Response) => {
 
 // ── GET /api/whatsapp/messages/:conversationId ────────────────────────────────
 // Retorna as mensagens de uma conversa, ordenadas por data de criação.
-router.get('/messages/:conversationId', async (req: Request, res: Response) => {
+router.get('/messages/:conversationId', ...withTenant(), async (req: Request, res: Response) => {
   const { conversationId } = req.params;
   if (!conversationId) return res.status(400).json({ success: false, error: 'conversationId obrigatório' });
 
   try {
+    // Verifica que a conversa pertence à organização antes de retornar mensagens
+    const { data: conv } = await supabase
+      .from('conversations')
+      .select('id')
+      .eq('id', conversationId)
+      .eq('church_id', req.organizationId!)
+      .maybeSingle();
+
+    if (!conv) return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
+
     const { data, error } = await supabase
       .from('messages')
       .select('id, conversation_id, sender_type, message_type, content, created_at')
@@ -445,7 +460,7 @@ router.get('/messages/:conversationId', async (req: Request, res: Response) => {
 // ── POST /api/whatsapp/conversations/:conversationId/send ─────────────────────
 // Envia mensagem de texto para o número da conversa via Evolution API.
 // Body: { content: string }
-router.post('/conversations/:conversationId/send', async (req: Request, res: Response) => {
+router.post('/conversations/:conversationId/send', ...withTenant(), async (req: Request, res: Response) => {
   if (!isConfigured()) return replyNotConfigured(res);
 
   const { conversationId } = req.params;
@@ -454,11 +469,12 @@ router.post('/conversations/:conversationId/send', async (req: Request, res: Res
   if (!content) return res.status(400).json({ success: false, error: 'content obrigatório' });
 
   try {
-    // 1. Buscar conversa → whatsapp_jid e instance_name
+    // 1. Buscar conversa → whatsapp_jid e instance_name (filtra por org para segurança)
     const { data: conv, error: convErr } = await supabase
       .from('conversations')
       .select('id, whatsapp_jid, instance_name')
       .eq('id', conversationId)
+      .eq('church_id', req.organizationId!)
       .maybeSingle();
 
     if (convErr || !conv) {

@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { persistIncomingMessage } from '../services/whatsappPersistence.ts';
+import { resolveOrgFromInstance }  from '../middleware/tenant.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -52,7 +53,6 @@ async function handleMessagesUpsert(
   instance: string,
   rawData:  unknown,
 ): Promise<void> {
-  // rawData pode ser objeto único OU array (depende da versão da Evolution API).
   const items: Record<string, any>[] = Array.isArray(rawData)
     ? rawData
     : [rawData as Record<string, any>];
@@ -62,20 +62,26 @@ async function handleMessagesUpsert(
     'keys do primeiro item:', Object.keys(items[0] ?? {}),
   );
 
+  // Resolve a organização uma vez por batch (todos os itens são do mesmo instance)
+  const orgId = await resolveOrgFromInstance(instance);
+  if (!orgId) {
+    console.warn(`[webhook] org não encontrada para instance="${instance}" — persistência pode falhar`);
+  }
+
   for (const data of items) {
     const msgType = extractMessageType(data);
     const content = extractContent(data);
 
     console.log('[webhook] processando item:', {
-      remoteJid:  data?.key?.remoteJid,
-      fromMe:     data?.key?.fromMe,
-      messageId:  data?.key?.id,
-      pushName:   data?.pushName,
+      remoteJid:      data?.key?.remoteJid,
+      fromMe:         data?.key?.fromMe,
+      messageId:      data?.key?.id,
+      pushName:       data?.pushName,
       msgType,
       contentPreview: content.slice(0, 80) || '(sem texto)',
     });
 
-    await persistIncomingMessage(instance, data, content, msgType);
+    await persistIncomingMessage(instance, data, content, msgType, orgId ?? undefined);
   }
 }
 

@@ -1,28 +1,27 @@
 import { type Request, type Response, type NextFunction } from 'express'
+import { supabaseAdmin } from '../lib/supabase.ts'
 
-export interface AuthRequest extends Request {
-  user?: any
-}
-
-export const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
-  const token = req.headers.authorization?.split(' ')[1]
+export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const authHeader = req.headers.authorization ?? ''
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : ''
 
   if (!token) {
-    res.status(401).json({ error: 'Unauthorized: No token provided' })
+    res.status(401).json({ success: false, error: 'Token de autenticação obrigatório' })
     return
   }
 
-  // MOCK AUTHENTICATION
-  if (token === 'mock-jwt-token') {
-    (req as AuthRequest).user = {
-      id: 'mock-user-id',
-      email: 'admin@celeiro.com',
-      name: 'Admin Fictício',
-      role: 'admin'
+  try {
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token)
+
+    if (error || !user) {
+      res.status(401).json({ success: false, error: 'Token inválido ou expirado' })
+      return
     }
-    next()
-    return
-  }
 
-  res.status(401).json({ error: 'Unauthorized: Invalid token' })
+    req.userId = user.id
+    next()
+  } catch (err: any) {
+    console.error('[auth] Erro ao validar token:', err?.message)
+    res.status(500).json({ success: false, error: 'Erro interno ao validar autenticação' })
+  }
 }
