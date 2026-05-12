@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { type Plan } from '@/lib/permissions'
 
-interface User {
+export interface User {
   id: string
   email: string
   name: string

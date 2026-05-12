@@ -1,4 +1,5 @@
 import { clsx } from 'clsx';
+import { SidebarItem } from './SidebarItem';
 
 type SidebarSectionProps = {
   label?: string;

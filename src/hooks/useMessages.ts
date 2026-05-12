@@ -32,12 +32,13 @@ export const useMessages = (conversation_id: string | null) => {
     setError(null);
     try {
       // Fetch the 30 most recent messages (newest first)
-      const { data, error, count } = await supabase
-        .from<Message>('messages')
+      const { data: rawData, error, count } = await supabase
+        .from('messages')
         .select('*', { count: 'exact' })
         .eq('conversation_id', conversation_id)
         .order('created_at', { ascending: false })
         .limit(30);
+      const data = rawData as Message[] | null;
 
       if (error) throw error;
 
@@ -82,13 +83,14 @@ export const useMessages = (conversation_id: string | null) => {
     setLoading(true);
     try {
       // Fetch messages older than the current oldest message
-      const { data, error, count } = await supabase
-        .from<Message>('messages')
+      const { data: rawData2, error, count } = await supabase
+        .from('messages')
         .select('*', { count: 'exact' })
         .eq('conversation_id', conversation_id)
-        .lt('created_at', oldestCreatedAtRef.current) // strictly less than
+        .lt('created_at', oldestCreatedAtRef.current)
         .order('created_at', { ascending: false })
         .limit(30);
+      const data = rawData2 as Message[] | null;
 
       if (error) throw error;
 

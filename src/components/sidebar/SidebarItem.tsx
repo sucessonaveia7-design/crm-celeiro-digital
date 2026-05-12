@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronUp } from 'lucide-react';
 
 type NavItem = { 
   path: string; 
@@ -13,14 +13,16 @@ type SidebarItemProps = {
   isActive: boolean;
   chatMenuOpen: boolean;
   setChatMenuOpen: (open: boolean) => void;
+  navigate: (path: string) => void;
 };
 
-export const SidebarItem = ({ 
-  item: { path, icon: Icon, label, subitems }, 
-  isCollapsed, 
-  isActive, 
-  chatMenuOpen, 
-  setChatMenuOpen 
+export const SidebarItem = ({
+  item: { path, icon: Icon, label, subitems },
+  isCollapsed,
+  isActive,
+  chatMenuOpen,
+  setChatMenuOpen,
+  navigate,
 }: SidebarItemProps) => {
   const isChatMenuItem = !!subitems; // true if this item has submenu (Bate-papo)
 
@@ -37,14 +39,7 @@ export const SidebarItem = ({
     if (isChatMenuItem) {
       setChatMenuOpen(!chatMenuOpen);
     } else {
-      // Navigate to the path (handled by parent via onClick prop? We'll adjust)
-      // For now, we assume the parent handles navigation for non-submenu items.
-      // We'll change the approach: the parent will pass an onClick for navigation.
-      // But let's keep it simple: we'll assume the parent handles navigation for non-submenu items.
-      // We'll change the SidebarItem to receive an onClick prop for navigation.
-      // However, to minimize changes, we'll let the parent handle navigation by passing an onClick.
-      // We'll adjust the parent to pass an onClick that navigates.
-      // For now, we'll leave it as is and adjust the parent later.
+      navigate(path);
     }
   };
 

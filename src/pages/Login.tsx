@@ -1,11 +1,50 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
+import type { User as StoreUser } from '@/store/authStore'
 import { useThemeStore } from '@/store/themeStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Eye, EyeOff, Wheat } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import type { User as SupabaseUser } from '@supabase/supabase-js'
+
+/**
+ * Maps a Supabase Auth User (v2) to the application store User shape.
+ * Supabase stores custom fields in user_metadata; this mapper extracts them
+ * and computes trial_expired / trial_days_left locally so the store stays current.
+ */
+function mapSupabaseUser(user: SupabaseUser): StoreUser {
+  const meta = (user.user_metadata ?? {}) as Record<string, unknown>
+
+  const trialEnd   = meta.trial_end   as string | null | undefined
+  const trialStart = meta.trial_start as string | null | undefined
+
+  let trial_expired   = false
+  let trial_days_left = 0
+
+  if (trialEnd) {
+    const endMs = new Date(trialEnd).getTime()
+    trial_expired = Date.now() > endMs
+    if (!trial_expired) {
+      trial_days_left = Math.max(0, Math.ceil((endMs - Date.now()) / 86_400_000))
+    }
+  }
+
+  return {
+    id:              user.id,
+    email:           user.email ?? '',
+    name:            (meta.name  as string | undefined) ?? user.email ?? '',
+    role:            (meta.role  as string | undefined) ?? 'user',
+    is_active:       true,
+    plan:            meta.plan         as string  | undefined,
+    trial_active:    meta.trial_active as boolean | undefined,
+    trial_start:     trialStart ?? null,
+    trial_end:       trialEnd   ?? null,
+    trial_expired,
+    trial_days_left,
+  }
+}
 
 export default function Login() {
   const navigate = useNavigate()
@@ -59,10 +98,11 @@ export default function Login() {
        }
 
        // Salvar dados de auth (inclui campos de trial)
-       setAuth(data.session?.access_token ?? '', data.user)
+       const storeUser = mapSupabaseUser(data.user!)
+       setAuth(data.session?.access_token ?? '', storeUser)
 
        // Se trial expirou, redirecionar para planos em vez do dashboard
-       if (data.user?.trial_expired) {
+       if (storeUser.trial_expired) {
          setIsSuccessLoading(true)
          setTimeout(() => {
            setIsFadingOut(true)
