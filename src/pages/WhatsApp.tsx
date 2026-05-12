@@ -9,6 +9,10 @@ import { useThemeStore } from '../store/themeStore';
 import { useKanbanStore } from '../store/kanbanStore';
 import { supabase } from '@/lib/supabase';
 
+// URL base do backend. Em produção aponta para o Railway; em dev usa proxy Vite (/api).
+const API_URL = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
+console.log('[WhatsApp] API_URL:', API_URL || '(relativo — proxy Vite)');
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface WaContact {
@@ -209,8 +213,11 @@ export default function WhatsApp() {
     loadingConvsRef.current = true;
     setWaConvsLoading(true);
     try {
-      const res  = await fetch('/api/whatsapp/conversations');
+      const url  = `${API_URL}/api/whatsapp/conversations`;
+      console.log('[WhatsApp] GET', url);
+      const res  = await fetch(url);
       const json = await res.json();
+      console.log('[WhatsApp] conversations response', json);
       const data: WaConversation[] = Array.isArray(json.data) ? json.data : [];
       setWaConversations(data);
       setSelectedConvId(prev => prev ?? (data[0]?.id ?? null));
@@ -225,8 +232,11 @@ export default function WhatsApp() {
   const loadWaMessages = useCallback(async (convId: string) => {
     setWaMsgsLoading(true);
     try {
-      const res  = await fetch(`/api/whatsapp/messages/${convId}`);
+      const url  = `${API_URL}/api/whatsapp/messages/${convId}`;
+      console.log('[WhatsApp] GET', url);
+      const res  = await fetch(url);
       const json = await res.json();
+      console.log('[WhatsApp] messages response', json);
       const data: WaMessage[] = Array.isArray(json.data) ? json.data : [];
       setWaMessages(data);
     } catch (err) {
