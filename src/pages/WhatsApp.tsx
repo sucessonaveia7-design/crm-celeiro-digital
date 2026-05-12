@@ -179,10 +179,12 @@ export default function WhatsApp() {
   const [waConversations, setWaConversations] = useState<WaConversation[]>([]);
   const [waMessages,      setWaMessages]      = useState<WaMessage[]>([]);
   const [waSearch,        setWaSearch]        = useState('');
+  const [waStatusTab,     setWaStatusTab]     = useState<'todos' | 'aguardando' | 'atendendo'>('todos');
   const [selectedConvId,  setSelectedConvId]  = useState<string | null>(null);
   const [waConvsLoading,  setWaConvsLoading]  = useState(false);
   const [waMsgsLoading,   setWaMsgsLoading]   = useState(false);
-  const chatBottomRef = useRef<HTMLDivElement>(null);
+  const loadingConvsRef = useRef(false);
+  const chatBottomRef   = useRef<HTMLDivElement>(null);
 
   const getContactName = (conv: WaConversation): string => {
     const c = Array.isArray(conv.contacts) ? conv.contacts[0] : conv.contacts;
@@ -203,20 +205,19 @@ export default function WhatsApp() {
     name.split(' ').map(p => p[0]).join('').substring(0, 2).toUpperCase();
 
   const loadWaConversations = useCallback(async () => {
-    if (waConvsLoading) return;
+    if (loadingConvsRef.current) return;
+    loadingConvsRef.current = true;
     setWaConvsLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('conversations')
-        .select('id, status, unread_count, last_message, last_message_at, whatsapp_jid, contacts(id, name, phone)')
-        .not('whatsapp_jid', 'is', null)
-        .order('last_message_at', { ascending: false, nullsFirst: false })
-        .limit(50);
-      if (!error && data) {
-        setWaConversations(data as WaConversation[]);
-        setSelectedConvId(prev => prev ?? (data[0]?.id ?? null));
-      }
+      const res  = await fetch('/api/whatsapp/conversations');
+      const json = await res.json();
+      const data: WaConversation[] = Array.isArray(json.data) ? json.data : [];
+      setWaConversations(data);
+      setSelectedConvId(prev => prev ?? (data[0]?.id ?? null));
+    } catch (err) {
+      console.error('[WhatsApp] loadWaConversations error:', err);
     } finally {
+      loadingConvsRef.current = false;
       setWaConvsLoading(false);
     }
   }, []);
@@ -224,13 +225,12 @@ export default function WhatsApp() {
   const loadWaMessages = useCallback(async (convId: string) => {
     setWaMsgsLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('messages')
-        .select('id, conversation_id, sender_type, message_type, content, created_at')
-        .eq('conversation_id', convId)
-        .order('created_at', { ascending: true })
-        .limit(100);
-      if (!error && data) setWaMessages(data as WaMessage[]);
+      const res  = await fetch(`/api/whatsapp/messages/${convId}`);
+      const json = await res.json();
+      const data: WaMessage[] = Array.isArray(json.data) ? json.data : [];
+      setWaMessages(data);
+    } catch (err) {
+      console.error('[WhatsApp] loadWaMessages error:', err);
     } finally {
       setWaMsgsLoading(false);
     }
@@ -543,6 +543,8 @@ export default function WhatsApp() {
 
             {/* ── Lista de Conversas ── */}
             <div className="w-1/3 border-r border-slate-100 dark:border-slate-800 flex flex-col">
+
+              {/* Busca */}
               <div className="p-4 border-b border-slate-100 dark:border-slate-800">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
@@ -556,6 +558,48 @@ export default function WhatsApp() {
                 </div>
               </div>
 
+              {/* Abas de status */}
+              {(() => {
+                const countTodos     = waConversations.length;
+                const countAguardando = waConversations.filter(c => c.status === 'aguardando').length;
+                const countAtendendo  = waConversations.filter(c => c.status === 'atendendo').length;
+                const tabs = [
+                  { key: 'todos',      label: 'Todos',      count: countTodos },
+                  { key: 'aguardando', label: 'Aguardando', count: countAguardando },
+                  { key: 'atendendo',  label: 'Atendendo',  count: countAtendendo },
+                ] as const;
+                return (
+                  <div className="flex border-b border-slate-100 dark:border-slate-800">
+                    {tabs.map(t => (
+                      <button
+                        key={t.key}
+                        onClick={() => setWaStatusTab(t.key)}
+                        className={`flex-1 py-2.5 text-[12px] font-[600] flex items-center justify-center gap-1.5 transition-colors relative ${
+                          waStatusTab === t.key
+                            ? 'text-[#D4AF37]'
+                            : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+                        }`}
+                      >
+                        {t.label}
+                        {t.count > 0 && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-[700] ${
+                            waStatusTab === t.key
+                              ? 'bg-[#D4AF37] text-white'
+                              : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                          }`}>
+                            {t.count}
+                          </span>
+                        )}
+                        {waStatusTab === t.key && (
+                          <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#D4AF37] rounded-t-full" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {/* Lista */}
               <div className="flex-1 overflow-y-auto">
                 {waConvsLoading && waConversations.length === 0 && (
                   <div className="flex items-center justify-center h-24 text-[13px] text-slate-400">
@@ -571,16 +615,35 @@ export default function WhatsApp() {
                   </div>
                 )}
 
-                {waConversations
-                  .filter(conv => {
+                {(() => {
+                  const filtered = waConversations.filter(conv => {
+                    const matchStatus =
+                      waStatusTab === 'todos' ||
+                      conv.status === waStatusTab;
+                    if (!matchStatus) return false;
                     if (!waSearch.trim()) return true;
                     const q = waSearch.toLowerCase();
                     return (
                       getContactName(conv).toLowerCase().includes(q) ||
                       (conv.last_message ?? '').toLowerCase().includes(q)
                     );
-                  })
-                  .map(conv => {
+                  });
+
+                  if (!waConvsLoading && waConversations.length > 0 && filtered.length === 0) {
+                    return (
+                      <div className="flex flex-col items-center justify-center h-32 text-center px-4">
+                        <p className="text-[13px] text-slate-400">Nenhuma conversa em "{waStatusTab}".</p>
+                        <button
+                          onClick={() => setWaStatusTab('todos')}
+                          className="mt-2 text-[12px] text-[#D4AF37] underline"
+                        >
+                          Ver todas
+                        </button>
+                      </div>
+                    );
+                  }
+
+                  return filtered.map(conv => {
                     const name     = getContactName(conv);
                     const initials = getInitials(name);
                     const unread   = conv.unread_count ?? 0;
@@ -595,7 +658,6 @@ export default function WhatsApp() {
                             : 'border-l-4 border-l-transparent'
                         }`}
                       >
-                        {/* Avatar com iniciais */}
                         <div className="w-12 h-12 rounded-full bg-[#D4AF37]/20 flex items-center justify-center flex-shrink-0">
                           <span className="text-[13px] font-[700] text-[#D4AF37]">{initials}</span>
                         </div>
@@ -607,6 +669,17 @@ export default function WhatsApp() {
                             </span>
                           </div>
                           <p className="text-[13px] text-slate-400 truncate">{conv.last_message ?? ''}</p>
+                          {conv.status && conv.status !== 'todos' && (
+                            <span className={`inline-block mt-1 text-[10px] font-[600] px-2 py-0.5 rounded-full ${
+                              conv.status === 'aguardando'
+                                ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
+                                : conv.status === 'atendendo'
+                                ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                            }`}>
+                              {conv.status}
+                            </span>
+                          )}
                         </div>
                         {unread > 0 && (
                           <div className="w-5 h-5 rounded-full bg-[#D4AF37] text-white text-[11px] font-[700] flex items-center justify-center mt-1 flex-shrink-0">
@@ -615,7 +688,8 @@ export default function WhatsApp() {
                         )}
                       </button>
                     );
-                  })}
+                  });
+                })()}
               </div>
             </div>
 
