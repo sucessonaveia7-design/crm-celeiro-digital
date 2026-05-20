@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   UserPlus, Check, Upload, Filter, X, Mail, Phone, Tag, Trash2, Edit2,
   ChevronDown, FileText, Search, Users, User, Download,
   SlidersHorizontal, Plus, Pencil, List, AlignLeft, Type, Hash,
   Calendar, ToggleLeft, CheckCircle2,
 } from 'lucide-react'
+import { useAuthStore } from '@/store/authStore'
 
 /* ─── Contact types ───────────────────────────────────── */
 
@@ -13,6 +14,29 @@ interface Contact {
   type: 'Membro' | 'Visitante' | 'Líder' | 'Administrador';
   status: 'Ativo' | 'Inativo' | 'Novo';
   tags: string[]; dateAdded: Date;
+}
+
+type DbContact = {
+  id: string; name: string; email: string | null; phone: string | null;
+  type: string; status: string; origin: string | null; created_at: string;
+}
+
+function cap(s: string | null | undefined): string {
+  if (!s) return ''
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function dbToContact(row: DbContact): Contact {
+  return {
+    id:        row.id,
+    name:      row.name,
+    email:     row.email   ?? '',
+    phone:     row.phone   ?? '',
+    type:      cap(row.type)   as Contact['type'],
+    status:    cap(row.status) as Contact['status'],
+    tags:      [],
+    dateAdded: new Date(row.created_at),
+  }
 }
 
 /* ─── Campo types ─────────────────────────────────────── */
@@ -70,23 +94,69 @@ function TipoChip({ tipo }: { tipo: FieldType }) {
 
 export default function AudiencePremium() {
 
+  const token = useAuthStore(s => s.token)
+
   /* ── Tab ── */
   const [activeTab, setActiveTab] = useState<'contatos' | 'campos'>('contatos')
 
   /* ── Contacts state ── */
   const [isAddModalOpen,    setIsAddModalOpen]    = useState(false)
   const [isImportModalOpen, setIsImportModalOpen] = useState(false)
-  const [contacts] = useState<Contact[]>([
-    { id: '1', name: 'Ana Flávia',    email: 'ana.flavia@email.com',  phone: '(11) 98765-4321', type: 'Líder',         status: 'Ativo',   tags: ['Líder', 'Novo'],           dateAdded: new Date(Date.now() - 86400000 * 2)   },
-    { id: '2', name: 'Carlos Mendes', email: 'carlos.m@email.com',    phone: '(11) 91234-5678', type: 'Visitante',     status: 'Novo',    tags: ['Interessado', 'Visitante'], dateAdded: new Date(Date.now() - 3600000 * 5)    },
-    { id: '3', name: 'Roberto Lima',  email: 'roberto.lima@email.com', phone: '(21) 99876-5432', type: 'Membro',        status: 'Ativo',   tags: ['Batizado'],                dateAdded: new Date(Date.now() - 86400000 * 15)  },
-    { id: '4', name: 'Juliana Costa', email: 'ju.costa@email.com',    phone: '(31) 98888-7777', type: 'Administrador', status: 'Ativo',   tags: ['Admin'],                   dateAdded: new Date(Date.now() - 86400000 * 100) },
-    { id: '5', name: 'Marcos Paulo',  email: 'marcos.p@email.com',    phone: '(41) 97777-6666', type: 'Membro',        status: 'Inativo', tags: ['Follow-up'],               dateAdded: new Date(Date.now() - 86400000 * 45)  },
-  ])
+  const [contacts,        setContacts]        = useState<Contact[]>([])
+  const [contactsLoading, setContactsLoading] = useState(true)
+  const [addForm,  setAddForm]  = useState({ name: '', email: '', phone: '', type: 'Visitante', tags: '', notes: '' })
+  const [addLoading, setAddLoading] = useState(false)
+  const [addError,   setAddError]   = useState('')
   const [searchQuery,   setSearchQuery]   = useState('')
   const [filterType,    setFilterType]    = useState('Todos')
   const [filterStatus,  setFilterStatus]  = useState('Todos')
   const [filterTag,     setFilterTag]     = useState('Todas')
+
+  const fetchContacts = useCallback(async () => {
+    if (!token) { setContactsLoading(false); return }
+    setContactsLoading(true)
+    try {
+      const res = await fetch('/api/contacts?limit=100', { headers: { Authorization: `Bearer ${token}` } })
+      const json: { success: boolean; data?: DbContact[] } = res.ok ? await res.json() : { success: false }
+      if (json.success) setContacts((json.data ?? []).map(dbToContact))
+    } catch {}
+    setContactsLoading(false)
+  }, [token])
+
+  useEffect(() => { fetchContacts() }, [fetchContacts])
+
+  const handleSaveContact = async () => {
+    if (!addForm.name.trim()) { setAddError('Nome é obrigatório.'); return }
+    setAddLoading(true); setAddError('')
+    try {
+      const res = await fetch('/api/contacts', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body:    JSON.stringify({
+          name:   addForm.name.trim(),
+          email:  addForm.email.trim()  || undefined,
+          phone:  addForm.phone.trim()  || undefined,
+          type:   addForm.type.toLowerCase(),
+          status: 'novo',
+          origin: addForm.notes.trim()  || undefined,
+        }),
+      })
+      const json = res.ok ? await res.json() : null
+      if (!res.ok || !json?.success) throw new Error(json?.error ?? 'Erro ao criar contato.')
+      await fetchContacts()
+      setIsAddModalOpen(false)
+      setAddForm({ name: '', email: '', phone: '', type: 'Visitante', tags: '', notes: '' })
+    } catch (err: unknown) { setAddError((err as Error).message ?? 'Erro desconhecido.') }
+    setAddLoading(false)
+  }
+
+  const handleDeleteContact = async (id: string) => {
+    if (!token) return
+    try {
+      await fetch(`/api/contacts/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+      setContacts(prev => prev.filter(c => c.id !== id))
+    } catch {}
+  }
 
   const filteredContacts = contacts.filter(c => {
     const matchesSearch  = c.name.toLowerCase().includes(searchQuery.toLowerCase()) || c.email.toLowerCase().includes(searchQuery.toLowerCase())
@@ -288,7 +358,12 @@ export default function AudiencePremium() {
               {/* Table */}
               <div className="bg-[#FFFFFF] dark:bg-[#0F172A] rounded-[24px] border border-[rgba(15,23,42,0.06)] dark:border-[rgba(255,255,255,0.06)] shadow-[0_12px_32px_rgba(15,23,42,0.05)] dark:shadow-[0_12px_32px_rgba(0,0,0,0.45)] overflow-hidden">
                 <div className="overflow-x-auto custom-scrollbar">
-                  {filteredContacts.length > 0 ? (
+                  {contactsLoading ? (
+                    <div className="p-[60px] flex flex-col items-center justify-center text-center">
+                      <div className="w-[48px] h-[48px] rounded-full border-[3px] border-[rgba(15,23,42,0.06)] border-t-[#D4AF37] animate-spin mb-5" />
+                      <p className="text-[14px] text-[#64748B] dark:text-[#94A3B8]">Carregando contatos...</p>
+                    </div>
+                  ) : filteredContacts.length > 0 ? (
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="border-b border-[rgba(15,23,42,0.06)] dark:border-[rgba(255,255,255,0.06)] bg-gradient-to-r from-[#F8FAFC] to-[#F1F5F9] dark:from-[#1E293B] dark:to-[#0F172A]">
@@ -349,7 +424,7 @@ export default function AudiencePremium() {
                               <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                                 <button className="p-[10px] rounded-[10px] text-[#64748B] hover:bg-[#EFF6FF] hover:text-[#0284C7] dark:hover:bg-[rgba(2,132,199,0.15)] hover:shadow-sm transition-all hover:-translate-y-[1px]"><Mail className="w-[18px] h-[18px]" /></button>
                                 <button className="p-[10px] rounded-[10px] text-[#64748B] hover:bg-[#FEF9C3] hover:text-[#B45309] dark:hover:bg-[rgba(250,204,21,0.15)] dark:hover:text-[#FACC15] hover:shadow-sm transition-all hover:-translate-y-[1px]"><Edit2 className="w-[18px] h-[18px]" /></button>
-                                <button className="p-[10px] rounded-[10px] text-[#64748B] hover:bg-[#FEE2E2] hover:text-[#DC2626] dark:hover:bg-[rgba(239,68,68,0.15)] dark:hover:text-[#F87171] hover:shadow-sm transition-all hover:-translate-y-[1px]"><Trash2 className="w-[18px] h-[18px]" /></button>
+                                <button onClick={() => handleDeleteContact(contact.id)} className="p-[10px] rounded-[10px] text-[#64748B] hover:bg-[#FEE2E2] hover:text-[#DC2626] dark:hover:bg-[rgba(239,68,68,0.15)] dark:hover:text-[#F87171] hover:shadow-sm transition-all hover:-translate-y-[1px]"><Trash2 className="w-[18px] h-[18px]" /></button>
                               </div>
                             </td>
                           </tr>
@@ -368,6 +443,7 @@ export default function AudiencePremium() {
                       </button>
                     </div>
                   )}
+
                 </div>
                 {filteredContacts.length > 0 && (
                   <div className="border-t border-[rgba(15,23,42,0.06)] dark:border-[rgba(255,255,255,0.06)] px-6 py-4 flex items-center justify-between bg-[#F8FAFC]/50 dark:bg-[#1E293B]/30">
@@ -522,33 +598,38 @@ export default function AudiencePremium() {
               <button onClick={() => setIsAddModalOpen(false)} className="w-[36px] h-[36px] rounded-full flex items-center justify-center text-[#64748B] hover:bg-[#F1F5F9] dark:hover:bg-[rgba(255,255,255,0.1)] transition-colors"><X className="w-[20px] h-[20px]" /></button>
             </div>
             <div className="p-8 overflow-y-auto max-h-[70vh] custom-scrollbar space-y-6">
+              {addError && (
+                <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-red-600 dark:text-red-400 px-4 py-3 rounded-[12px] text-[13px]">
+                  {addError}
+                </div>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="text-[13px] font-[600] text-[#475569] dark:text-[#CBD5E1] ml-1">Nome completo <span className="text-[#EF4444]">*</span></label>
                   <div className="relative group">
                     <User className="w-[18px] h-[18px] text-[#94A3B8] absolute left-[14px] top-[14px] pointer-events-none group-focus-within:text-[#D4AF37]" />
-                    <input type="text" placeholder="Ex: João da Silva" className="w-full bg-[#F8FAFC] dark:bg-[#1E293B] border border-[rgba(15,23,42,0.08)] dark:border-[rgba(255,255,255,0.08)] rounded-[14px] pl-[42px] pr-[16px] py-[12px] text-[14px] text-[#0F172A] dark:text-white placeholder-[#94A3B8] focus:ring-4 focus:ring-[rgba(250,204,21,0.12)] focus:border-[rgba(250,204,21,0.5)] outline-none transition-all" />
+                    <input type="text" placeholder="Ex: João da Silva" value={addForm.name} onChange={e => setAddForm(f => ({...f, name: e.target.value}))} className="w-full bg-[#F8FAFC] dark:bg-[#1E293B] border border-[rgba(15,23,42,0.08)] dark:border-[rgba(255,255,255,0.08)] rounded-[14px] pl-[42px] pr-[16px] py-[12px] text-[14px] text-[#0F172A] dark:text-white placeholder-[#94A3B8] focus:ring-4 focus:ring-[rgba(250,204,21,0.12)] focus:border-[rgba(250,204,21,0.5)] outline-none transition-all" />
                   </div>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[13px] font-[600] text-[#475569] dark:text-[#CBD5E1] ml-1">Email</label>
                   <div className="relative group">
                     <Mail className="w-[18px] h-[18px] text-[#94A3B8] absolute left-[14px] top-[14px] pointer-events-none group-focus-within:text-[#D4AF37]" />
-                    <input type="email" placeholder="joao@email.com" className="w-full bg-[#F8FAFC] dark:bg-[#1E293B] border border-[rgba(15,23,42,0.08)] dark:border-[rgba(255,255,255,0.08)] rounded-[14px] pl-[42px] pr-[16px] py-[12px] text-[14px] text-[#0F172A] dark:text-white placeholder-[#94A3B8] focus:ring-4 focus:ring-[rgba(250,204,21,0.12)] focus:border-[rgba(250,204,21,0.5)] outline-none transition-all" />
+                    <input type="email" placeholder="joao@email.com" value={addForm.email} onChange={e => setAddForm(f => ({...f, email: e.target.value}))} className="w-full bg-[#F8FAFC] dark:bg-[#1E293B] border border-[rgba(15,23,42,0.08)] dark:border-[rgba(255,255,255,0.08)] rounded-[14px] pl-[42px] pr-[16px] py-[12px] text-[14px] text-[#0F172A] dark:text-white placeholder-[#94A3B8] focus:ring-4 focus:ring-[rgba(250,204,21,0.12)] focus:border-[rgba(250,204,21,0.5)] outline-none transition-all" />
                   </div>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[13px] font-[600] text-[#475569] dark:text-[#CBD5E1] ml-1">Telefone</label>
                   <div className="relative group">
                     <Phone className="w-[18px] h-[18px] text-[#94A3B8] absolute left-[14px] top-[14px] pointer-events-none group-focus-within:text-[#D4AF37]" />
-                    <input type="text" placeholder="(00) 00000-0000" className="w-full bg-[#F8FAFC] dark:bg-[#1E293B] border border-[rgba(15,23,42,0.08)] dark:border-[rgba(255,255,255,0.08)] rounded-[14px] pl-[42px] pr-[16px] py-[12px] text-[14px] text-[#0F172A] dark:text-white placeholder-[#94A3B8] focus:ring-4 focus:ring-[rgba(250,204,21,0.12)] focus:border-[rgba(250,204,21,0.5)] outline-none transition-all" />
+                    <input type="text" placeholder="(00) 00000-0000" value={addForm.phone} onChange={e => setAddForm(f => ({...f, phone: e.target.value}))} className="w-full bg-[#F8FAFC] dark:bg-[#1E293B] border border-[rgba(15,23,42,0.08)] dark:border-[rgba(255,255,255,0.08)] rounded-[14px] pl-[42px] pr-[16px] py-[12px] text-[14px] text-[#0F172A] dark:text-white placeholder-[#94A3B8] focus:ring-4 focus:ring-[rgba(250,204,21,0.12)] focus:border-[rgba(250,204,21,0.5)] outline-none transition-all" />
                   </div>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[13px] font-[600] text-[#475569] dark:text-[#CBD5E1] ml-1">Tipo de Contato</label>
                   <div className="relative group">
                     <Users className="w-[18px] h-[18px] text-[#94A3B8] absolute left-[14px] top-[14px] pointer-events-none group-focus-within:text-[#D4AF37]" />
-                    <select className="w-full bg-[#F8FAFC] dark:bg-[#1E293B] border border-[rgba(15,23,42,0.08)] dark:border-[rgba(255,255,255,0.08)] rounded-[14px] pl-[42px] pr-[36px] py-[12px] text-[14px] text-[#0F172A] dark:text-white focus:ring-4 focus:ring-[rgba(250,204,21,0.12)] focus:border-[rgba(250,204,21,0.5)] outline-none transition-all appearance-none cursor-pointer">
+                    <select value={addForm.type} onChange={e => setAddForm(f => ({...f, type: e.target.value}))} className="w-full bg-[#F8FAFC] dark:bg-[#1E293B] border border-[rgba(15,23,42,0.08)] dark:border-[rgba(255,255,255,0.08)] rounded-[14px] pl-[42px] pr-[36px] py-[12px] text-[14px] text-[#0F172A] dark:text-white focus:ring-4 focus:ring-[rgba(250,204,21,0.12)] focus:border-[rgba(250,204,21,0.5)] outline-none transition-all appearance-none cursor-pointer">
                       <option>Visitante</option><option>Membro</option><option>Líder</option><option>Administrador</option>
                     </select>
                     <ChevronDown className="w-[16px] h-[16px] text-[#94A3B8] absolute right-[16px] top-[15px] pointer-events-none" />
@@ -559,20 +640,20 @@ export default function AudiencePremium() {
                 <label className="text-[13px] font-[600] text-[#475569] dark:text-[#CBD5E1] ml-1">Tags (separadas por vírgula)</label>
                 <div className="relative group">
                   <Tag className="w-[18px] h-[18px] text-[#94A3B8] absolute left-[14px] top-[14px] pointer-events-none group-focus-within:text-[#D4AF37]" />
-                  <input type="text" placeholder="Ex: Novo, Interessado, Follow-up" className="w-full bg-[#F8FAFC] dark:bg-[#1E293B] border border-[rgba(15,23,42,0.08)] dark:border-[rgba(255,255,255,0.08)] rounded-[14px] pl-[42px] pr-[16px] py-[12px] text-[14px] text-[#0F172A] dark:text-white placeholder-[#94A3B8] focus:ring-4 focus:ring-[rgba(250,204,21,0.12)] focus:border-[rgba(250,204,21,0.5)] outline-none transition-all" />
+                  <input type="text" placeholder="Ex: Novo, Interessado, Follow-up" value={addForm.tags} onChange={e => setAddForm(f => ({...f, tags: e.target.value}))} className="w-full bg-[#F8FAFC] dark:bg-[#1E293B] border border-[rgba(15,23,42,0.08)] dark:border-[rgba(255,255,255,0.08)] rounded-[14px] pl-[42px] pr-[16px] py-[12px] text-[14px] text-[#0F172A] dark:text-white placeholder-[#94A3B8] focus:ring-4 focus:ring-[rgba(250,204,21,0.12)] focus:border-[rgba(250,204,21,0.5)] outline-none transition-all" />
                 </div>
               </div>
               <div className="space-y-2">
                 <label className="text-[13px] font-[600] text-[#475569] dark:text-[#CBD5E1] ml-1">Observações</label>
                 <div className="relative group">
                   <FileText className="w-[18px] h-[18px] text-[#94A3B8] absolute left-[14px] top-[14px] pointer-events-none group-focus-within:text-[#D4AF37]" />
-                  <textarea rows={3} placeholder="Anotações adicionais..." className="w-full bg-[#F8FAFC] dark:bg-[#1E293B] border border-[rgba(15,23,42,0.08)] dark:border-[rgba(255,255,255,0.08)] rounded-[14px] pl-[42px] pr-[16px] py-[12px] text-[14px] text-[#0F172A] dark:text-white placeholder-[#94A3B8] focus:ring-4 focus:ring-[rgba(250,204,21,0.12)] focus:border-[rgba(250,204,21,0.5)] outline-none transition-all resize-none custom-scrollbar" />
+                  <textarea rows={3} placeholder="Anotações adicionais..." value={addForm.notes} onChange={e => setAddForm(f => ({...f, notes: e.target.value}))} className="w-full bg-[#F8FAFC] dark:bg-[#1E293B] border border-[rgba(15,23,42,0.08)] dark:border-[rgba(255,255,255,0.08)] rounded-[14px] pl-[42px] pr-[16px] py-[12px] text-[14px] text-[#0F172A] dark:text-white placeholder-[#94A3B8] focus:ring-4 focus:ring-[rgba(250,204,21,0.12)] focus:border-[rgba(250,204,21,0.5)] outline-none transition-all resize-none custom-scrollbar" />
                 </div>
               </div>
             </div>
             <div className="px-8 py-6 border-t border-[rgba(15,23,42,0.06)] dark:border-[rgba(255,255,255,0.06)] flex items-center justify-end gap-4 bg-[#F8FAFC]/50 dark:bg-[#1E293B]/30">
-              <button onClick={() => setIsAddModalOpen(false)} className="px-[20px] py-[12px] rounded-[12px] text-[14px] font-[600] text-[#475569] dark:text-[#CBD5E1] hover:bg-[#F1F5F9] dark:hover:bg-[#1E293B] border border-[rgba(15,23,42,0.08)] dark:border-[rgba(255,255,255,0.08)] transition-all">Cancelar</button>
-              <button onClick={() => setIsAddModalOpen(false)} className="px-[28px] py-[12px] rounded-[12px] bg-gradient-to-br from-[#FACC15] to-[#EAB308] text-[#0F172A] font-[600] text-[14px] shadow-[0_6px_16px_rgba(250,204,21,0.3)] hover:scale-[1.02] transition-all flex items-center gap-2"><Check className="w-[18px] h-[18px]" /> Salvar Contato</button>
+              <button onClick={() => { setIsAddModalOpen(false); setAddError(''); setAddForm({ name: '', email: '', phone: '', type: 'Visitante', tags: '', notes: '' }) }} className="px-[20px] py-[12px] rounded-[12px] text-[14px] font-[600] text-[#475569] dark:text-[#CBD5E1] hover:bg-[#F1F5F9] dark:hover:bg-[#1E293B] border border-[rgba(15,23,42,0.08)] dark:border-[rgba(255,255,255,0.08)] transition-all">Cancelar</button>
+              <button onClick={handleSaveContact} disabled={addLoading} className="px-[28px] py-[12px] rounded-[12px] bg-gradient-to-br from-[#FACC15] to-[#EAB308] text-[#0F172A] font-[600] text-[14px] shadow-[0_6px_16px_rgba(250,204,21,0.3)] hover:scale-[1.02] transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:scale-100">{addLoading ? 'Salvando...' : <><Check className="w-[18px] h-[18px]" /> Salvar Contato</>}</button>
             </div>
           </div>
         </div>

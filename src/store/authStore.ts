@@ -15,6 +15,9 @@ export interface User {
   trial_end?: string | null
   trial_expired?: boolean
   trial_days_left?: number
+  // Organização ativa
+  organization_id?:   string
+  organization_name?: string
 }
 
 interface AuthState {
